@@ -110,9 +110,7 @@ for file in \
 do
 
     if [ -f "$APP_DIR/$file" ]; then
-
         COMPOSE_FILE="$APP_DIR/$file"
-
         break
     fi
 
@@ -200,7 +198,6 @@ cd "$APP_DIR"
 pause() {
 
     echo
-
     read -r -p "按 Enter 返回主選單..." _
 
 }
@@ -243,13 +240,16 @@ show_menu() {
     echo "2) 關閉專案"
     echo "3) 重啟專案"
     echo "4) 查看 Container 狀態"
+
     echo
     echo "5) 查看全部 Log"
     echo "6) 查看 Backend Log"
     echo "7) 查看 Frontend Log"
     echo "8) 查看 MySQL Log"
+
     echo
     echo "9) Rebuild 專案"
+
     echo
     echo "0) 離開"
 
@@ -280,7 +280,7 @@ get_linux_ip() {
 
 
 # =========================================================
-# Show container status
+# Container status
 # =========================================================
 
 show_container_status() {
@@ -293,7 +293,7 @@ show_container_status() {
 
 
 # =========================================================
-# Show connection information
+# Connection information
 # =========================================================
 
 show_connection_info() {
@@ -309,107 +309,33 @@ show_connection_info() {
     echo "============================================================"
 
     echo
-
-    echo "Deployment directory:"
-    echo "  $APP_DIR"
-
-    echo
-
-    echo "Linux IP:"
-    echo "  $linux_ip"
-
-    echo
-
     echo "Browser:"
     echo "  http://$linux_ip"
 
-
     echo
     echo "------------------------------------------------------------"
-    echo "MySQL"
+    echo " MySQL"
     echo "------------------------------------------------------------"
 
     echo
-
-    echo "Host:"
-    echo "  $linux_ip"
-
-    echo
-
-    echo "Port:"
-    echo "  $MYSQL_PORT"
+    printf "%-11s %s\n" "Host:" "$linux_ip"
+    printf "%-11s %s\n" "Port:" "$MYSQL_PORT"
+    printf "%-11s %s\n" "User:" "$MYSQL_USER"
+    printf "%-11s %s\n" "Password:" "$MYSQL_PASSWORD"
+    printf "%-11s %s\n" "Database:" "$MYSQL_DATABASE"
 
     echo
-
-    echo "User:"
-    echo "  $MYSQL_USER"
-
-    echo
-
-    echo "Password:"
-    echo "  $MYSQL_PASSWORD"
-
-    echo
-
-    echo "Database:"
-    echo "  $MYSQL_DATABASE"
-
-    echo
-
     echo "MySQL CLI:"
     echo "  mysql -h $linux_ip -P$MYSQL_PORT -u $MYSQL_USER -p"
 
-
     echo
-    echo "------------------------------------------------------------"
-    echo "Docker Compose"
-    echo "------------------------------------------------------------"
-
-    echo
-
-    echo "Start:"
-    echo "  sudo bash manage.sh"
-    echo "  → 選擇 1"
-
-    echo
-
-    echo "Stop:"
-    echo "  sudo bash manage.sh"
-    echo "  → 選擇 2"
-
-    echo
-
-    echo "Restart:"
-    echo "  sudo bash manage.sh"
-    echo "  → 選擇 3"
-
-    echo
-
-    echo "Status:"
-    echo "  sudo bash manage.sh"
-    echo "  → 選擇 4"
-
-    echo
-
-    echo "Logs:"
-    echo "  sudo bash manage.sh"
-    echo "  → 選擇 5"
-
-    echo
-
-    echo "Rebuild:"
-    echo "  sudo bash manage.sh"
-    echo "  → 選擇 9"
-
-    echo
-
     echo "============================================================"
 
 }
 
 
 # =========================================================
-# Show project information
+# Project information
 #
 # Used after:
 # Start / Restart / Rebuild
@@ -425,7 +351,7 @@ show_project_info() {
 
 
 # =========================================================
-# Start
+# Start project
 # =========================================================
 
 start_project() {
@@ -442,7 +368,7 @@ start_project() {
 
 
 # =========================================================
-# Stop
+# Stop project
 # =========================================================
 
 stop_project() {
@@ -457,7 +383,7 @@ stop_project() {
 
 
 # =========================================================
-# Restart
+# Restart project
 # =========================================================
 
 restart_project() {
@@ -482,7 +408,7 @@ restart_project() {
 
 
 # =========================================================
-# Status
+# Show status
 # =========================================================
 
 show_status() {
@@ -493,7 +419,7 @@ show_status() {
 
 
 # =========================================================
-# All logs
+# Show all logs
 # =========================================================
 
 show_logs() {
@@ -514,7 +440,7 @@ show_logs() {
 
 
 # =========================================================
-# Backend logs
+# Show Backend logs
 # =========================================================
 
 show_backend_logs() {
@@ -535,7 +461,7 @@ show_backend_logs() {
 
 
 # =========================================================
-# Frontend logs
+# Show Frontend logs
 # =========================================================
 
 show_frontend_logs() {
@@ -556,7 +482,7 @@ show_frontend_logs() {
 
 
 # =========================================================
-# MySQL logs
+# Show MySQL logs
 # =========================================================
 
 show_mysql_logs() {
@@ -577,7 +503,7 @@ show_mysql_logs() {
 
 
 # =========================================================
-# Rebuild
+# Rebuild project
 # =========================================================
 
 rebuild_project() {
@@ -600,6 +526,7 @@ rebuild_project() {
 confirm_action() {
 
     local message="$1"
+    local answer
 
     echo
 
