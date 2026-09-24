@@ -1,119 +1,173 @@
-EmployeeManagementSystem
+Employee Management System
 
-專案說明
+Employee Management System 使用 Docker Compose 建立執行環境。
 
-此專案使用 Docker Compose 建立執行環境。
+專案包含：
 
-目前已測試的 Linux 環境：
+- Backend
+- Frontend
+- MySQL
+- Nginx
 
-- Windows Subsystem for Linux 2（WSL2）
-  - Ubuntu 22.04
-- macOS + UTM
-  - Ubuntu 24.04.2 Server AMD64
+並提供自動部署腳本：
+
+install_docker_tools.sh
+
+部署腳本會自動安裝 Docker 相關工具、下載專案需要的大型檔案、建立 Docker Image 並啟動整個專案。
 
 ---
 
-必要檔案
+測試環境
 
-由於以下檔案較大，因此沒有直接上傳至 GitHub，而是存放於 MEGA：
+目前已於以下 Linux 環境進行測試：
 
-1. "jdk17.tar.gz"
-   
-   - 專案指定使用的 JDK 17
+Windows
 
-2. "myWeb.jar"
-   
-   - Backend 專案 JAR
+Windows Subsystem for Linux 2：
+
+WSL2
+Ubuntu 22.04
+
+macOS
+
+macOS 使用 UTM 建立 Ubuntu VM：
+
+Ubuntu 24.04.2 Server AMD64
+
+---
+
+快速部署
+
+1. Clone 專案
+
+使用 Git Clone：
+
+git clone https://github.com/NeedMoreCrack/employee-management-system.git
+
+進入專案：
+
+cd employee-management-system
+
+---
+
+2. 執行部署腳本
+
+部署腳本需要 Root 權限。
+
+執行：
+
+sudo bash install_docker_tools.sh
+
+部署腳本會自動完成以下操作：
+
+1. 檢查 Docker Compose 設定
+2. 更新 Ubuntu Package List
+3. 安裝 Docker
+4. 安裝 Docker Compose V2
+5. 安裝 Docker Buildx
+6. 安裝 MEGA Tools
+7. 啟動 Docker Service
+8. 檢查 Docker Daemon
+9. 下載 "jdk17.tar.gz"
+10. 下載 "myWeb.jar"
+11. Pull "nginx:1.28.0"
+12. Pull "mysql:8"
+13. 驗證 Docker Compose 設定
+14. Build 專案
+15. 啟動所有 Container
+16. 顯示 Container 狀態
+17. 顯示 Linux IP
+18. 顯示 MySQL 連線資訊
+
+正常情況下只需要：
+
+git clone https://github.com/NeedMoreCrack/employee-management-system.git
+cd employee-management-system
+sudo bash install_docker_tools.sh
+
+即可完成部署。
+
+---
+
+大型檔案
+
+由於以下檔案較大，因此沒有直接上傳至 GitHub。
+
+JDK 17
+
+jdk17.tar.gz
+
+專案 Docker Build 使用的指定 JDK 17。
+
+Backend JAR
+
+myWeb.jar
+
+Backend 專案的 JAR。
 
 正常情況下不需要手動下載。
 
-"install_docker_tools.sh" 會自動安裝 "megatools"，並下載上述檔案至：
+執行：
 
-/usr/local/app
-
----
-
-快速啟動
-
-1. 下載專案
-
-先從 GitHub Clone 此專案：
-
-git clone <GitHub Repository URL>
-
-進入專案目錄：
-
-cd EmployeeManagementSystem
-
----
-
-2. 將專案放置於 "/usr/local/app"
-
-專案執行目錄為：
-
-/usr/local/app
-
-請將 EmployeeManagementSystem 專案內的檔案放置於：
-
-/usr/local/app
-
-完成後目錄結構應類似：
-
-/usr/local/app
-├── docker-compose.yml
-├── install_docker_tools.sh
-├── ...
-
-«"jdk17.tar.gz" 與 "myWeb.jar" 不需要手動放入，安裝腳本會自動下載。»
-
----
-
-3. 執行安裝腳本
-
-安裝腳本必須使用 "root" 權限執行：
-
-cd /usr/local/app
 sudo bash install_docker_tools.sh
 
-腳本會自動執行：
+部署腳本會透過 MEGA 自動下載。
 
-1. 更新 Ubuntu 套件清單
-2. 安裝 Docker
-3. 安裝 Docker Compose V2
-4. 安裝 Docker Buildx
-5. 安裝 MEGA Tools
-6. 啟動 Docker Service
-7. 下載 "jdk17.tar.gz"
-8. 下載 "myWeb.jar"
-9. Pull "nginx:1.28.0"
-10. Pull "mysql:8"
-11. 檢查 Docker Compose 設定
-12. 執行 "docker compose up -d"
-
-因此不需要另外手動安裝 Docker 或下載 MEGA 檔案。
+如果檔案已經存在於專案目錄，腳本會自動跳過下載。
 
 ---
+
+手動下載大型檔案
+
+如果 MEGA 自動下載失敗，可以手動下載。
+
+首先安裝 MEGA Tools：
+
+sudo apt update
+sudo apt install megatools -y
+
+下載 JDK 17
+
+megatools dl 'https://mega.nz/file/F4gGmBjC#TJqBitRWbdWubIB7fRTsCzLQoe0XxkYWWWCKXXc-Be4'
+
+下載 Backend JAR
+
+megatools dl 'https://mega.nz/file/t8AGkDjb#OV5jHhOqXnL8xsQu77aqHeMMds6HdBkiBuzCkp3C25A'
+
+下載完成後，確認兩個檔案位於專案根目錄：
+
+employee-management-system/
+├── docker-compose.yml
+├── Dockerfile
+├── install_docker_tools.sh
+├── jdk17.tar.gz
+├── myWeb.jar
+├── mysql/
+├── nginx/
+└── ...
+
+---
+
+Docker 操作
+
+部署完成後，後續不需要再次執行安裝腳本。
+
+請先進入專案目錄：
+
+cd employee-management-system
 
 啟動專案
 
-如果環境已經安裝完成，之後要再次啟動專案只需要：
-
-cd /usr/local/app
 sudo docker compose up -d
 
-啟動成功後會看到類似：
+如果有修改 Dockerfile 或需要重新 Build：
 
-✔ backend                   Built
-✔ Network myWeb             Created
-✔ Container mysql           Started
-✔ Container myweb-backend   Started
-✔ Container myweb-frontend  Started
+sudo docker compose up -d --build
 
 ---
 
 關閉專案
 
-cd /usr/local/app
 sudo docker compose down
 
 ---
@@ -134,49 +188,54 @@ sudo docker ps
 
 sudo docker compose logs -f
 
-如果只想查看指定服務，例如 Backend：
+查看 Backend：
 
 sudo docker compose logs -f backend
 
+查看 MySQL：
+
+sudo docker compose logs -f mysql
+
 ---
 
-查詢 Linux IP
+查看 Linux IP
 
 可以使用：
 
-ip addr
+hostname -I
 
 或：
 
-hostname -I
-
-例如取得：
-
-172.20.10.5
-
-即可在本機瀏覽器使用該 IP 存取服務。
+ip addr
 
 例如：
 
+172.20.10.5
+
+即可嘗試從本機瀏覽器存取：
+
 http://172.20.10.5
 
-«實際 IP 依 WSL2、UTM 或 Linux 網路環境而有所不同。»
+«實際 IP 會依 WSL2、UTM 或 Linux 網路設定而有所不同。»
+
+部署腳本執行完成後，也會自動顯示目前偵測到的 Linux IP。
 
 ---
 
 MySQL
 
-Docker Compose 會建立 MySQL Container。
+MySQL 由 Docker Compose 建立。
 
-目前設定：
+目前連線設定：
 
 設定| 值
+Host| Linux IP
 Port| "3307"
 User| "root"
 Password| "321321321"
 Database| "restful"
 
-可以從 Linux 使用以下方式連線：
+使用 MySQL Client 連線：
 
 mysql -h <Linux-IP> -P3307 -u root -p
 
@@ -184,83 +243,76 @@ mysql -h <Linux-IP> -P3307 -u root -p
 
 mysql -h 172.20.10.5 -P3307 -u root -p
 
-接著輸入密碼：
+接著輸入：
 
 321321321
 
 ---
 
-手動下載 MEGA 檔案
+部署成功
 
-正常情況下不需要手動執行此步驟。
+成功部署後會看到類似：
 
-如果自動下載失敗，可以先安裝 MEGA Tools：
+✔ backend                   Built
+✔ Network myWeb             Created
+✔ Container mysql           Started
+✔ Container myweb-backend   Started
+✔ Container myweb-frontend  Started
 
-sudo apt update
-sudo apt install megatools -y
+接著可以使用：
 
-下載 JDK 17：
+sudo docker compose ps
 
-megatools dl 'https://mega.nz/file/F4gGmBjC#TJqBitRWbdWubIB7fRTsCzLQoe0XxkYWWWCKXXc-Be4'
-
-下載 Backend JAR：
-
-megatools dl 'https://mega.nz/file/t8AGkDjb#OV5jHhOqXnL8xsQu77aqHeMMds6HdBkiBuzCkp3C25A'
-
-下載完成後，將檔案放置於：
-
-/usr/local/app
+確認服務狀態。
 
 ---
 
-安裝腳本
+部署腳本錯誤
 
-專案提供：
+如果沒有使用 Root 權限執行：
 
-install_docker_tools.sh
+bash install_docker_tools.sh
 
-執行方式：
-
-sudo bash install_docker_tools.sh
-
-如果不是使用 root 權限執行，腳本會直接停止：
+腳本會停止並顯示：
 
 [ERROR] This script must be run as root.
 
 Please run:
 sudo bash install_docker_tools.sh
 
+請改用：
+
+sudo bash install_docker_tools.sh
+
 ---
 
-常用指令
+專案更新
 
-啟動：
+如果 GitHub 專案有更新：
 
-sudo docker compose up -d
+git pull
 
-停止：
+如果只有程式或 Docker 設定變更，可以重新 Build：
 
-sudo docker compose down
+sudo docker compose up -d --build
 
 查看狀態：
 
 sudo docker compose ps
 
-查看 Log：
+---
 
-sudo docker compose logs -f
+常用指令
 
-重新 Build：
-
-sudo docker compose up -d --build
-
-查看 Docker Image：
-
-sudo docker images
-
-查看 Linux IP：
-
-hostname -I
+操作| 指令
+部署環境| "sudo bash install_docker_tools.sh"
+啟動專案| "sudo docker compose up -d"
+重新 Build| "sudo docker compose up -d --build"
+關閉專案| "sudo docker compose down"
+查看 Container| "sudo docker compose ps"
+查看 Log| "sudo docker compose logs -f"
+查看 Docker Image| "sudo docker images"
+查看 Linux IP| "hostname -I"
 
 ---
 
@@ -268,26 +320,40 @@ hostname -I
 
 2025-07-08
 
-- 新增 Docker 安裝腳本
-- 自動安裝：
-  - Docker
-  - Docker Compose V2
-  - Docker Buildx
-- 自動 Pull 專案需要的 Docker Images
+新增 Docker 安裝及 Image Pull 腳本。
+
+自動安裝：
+
+- Docker
+- Docker Compose V2
+- Docker Buildx
+
+自動 Pull：
+
+- nginx
+- MySQL
+
+---
 
 2026-09-24
 
-- 更新 "install_docker_tools.sh"
-- 新增 "megatools" 自動安裝
-- 新增 MEGA 必要檔案自動下載
-  - "jdk17.tar.gz"
-  - "myWeb.jar"
-- 自動建立 "/usr/local/app"
-- 自動檢查 Docker Daemon
-- 改善 WSL2 / Ubuntu Docker Service 啟動方式
-- 自動檢查 Docker Compose 設定
-- 自動執行 "docker compose up -d"
-- 啟動完成後顯示：
-  - Container 狀態
-  - Linux IP
-  - MySQL 連線資訊
+重新整理專案部署流程。
+
+新增：
+
+- 自動偵測專案目錄
+- 不再限制專案必須放置於 "/usr/local/app"
+- 自動安裝 MEGA Tools
+- 自動下載 "jdk17.tar.gz"
+- 自動下載 "myWeb.jar"
+- 已存在的大型檔案自動跳過下載
+- 自動啟動 Docker Service
+- WSL2 Docker Service 啟動相容處理
+- Docker Daemon 檢查
+- Docker Compose 設定驗證
+- 自動 Pull Docker Images
+- 自動 Build 專案
+- 自動啟動 Container
+- 自動顯示 Container 狀態
+- 自動取得 Linux IP
+- 顯示 MySQL 連線資訊

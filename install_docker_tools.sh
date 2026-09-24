@@ -3,10 +3,10 @@
 set -e
 
 # =========================================================
-# EmployeeManagementSystem
-# Docker 環境安裝 + MEGA 檔案下載 + 專案啟動腳本
+# Employee Management System
+# Docker 環境安裝與專案部署腳本
 #
-# 支援測試環境：
+# 測試環境：
 #   - WSL2 Ubuntu 22.04
 #   - Ubuntu 24.04 Server
 #
@@ -19,7 +19,8 @@ set -e
 # 基本設定
 # =========================================================
 
-APP_DIR="/usr/local/app"
+# 取得此腳本所在的專案目錄
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 JDK_FILE="jdk17.tar.gz"
 JAR_FILE="myWeb.jar"
@@ -43,9 +44,20 @@ success() {
     echo "[OK] $1"
 }
 
+warning() {
+    echo "[WARNING] $1"
+}
+
 error() {
     echo "[ERROR] $1" >&2
 }
+
+
+# =========================================================
+# 發生錯誤時顯示資訊
+# =========================================================
+
+trap 'error "Deployment failed at line $LINENO."' ERR
 
 
 # =========================================================
@@ -56,13 +68,48 @@ if [ "$EUID" -ne 0 ]; then
     error "This script must be run as root."
     echo
     echo "Please run:"
-    echo "sudo bash $0"
+    echo "sudo bash install_docker_tools.sh"
     exit 1
 fi
 
 
 # =========================================================
-# 更新套件
+# 切換到專案目錄
+# =========================================================
+
+cd "$SCRIPT_DIR"
+
+info "Project directory"
+
+echo "$SCRIPT_DIR"
+
+
+# =========================================================
+# 檢查 Docker Compose 設定檔
+# =========================================================
+
+info "Checking project files..."
+
+if [ -f "docker-compose.yml" ] || \
+   [ -f "docker-compose.yaml" ] || \
+   [ -f "compose.yml" ] || \
+   [ -f "compose.yaml" ]; then
+
+    success "Docker Compose configuration found."
+
+else
+
+    error "Docker Compose configuration not found."
+    echo
+    echo "Please make sure this script is inside the"
+    echo "Employee Management System project directory."
+    exit 1
+
+fi
+
+
+# =========================================================
+# 更新 Ubuntu 套件清單
 # =========================================================
 
 info "Updating package list..."
@@ -76,7 +123,7 @@ success "Package list updated."
 # 安裝 Docker / Compose / Buildx / MEGA Tools
 # =========================================================
 
-info "Installing Docker and required tools..."
+info "Installing required packages..."
 
 apt install -y \
     docker.io \
@@ -84,7 +131,7 @@ apt install -y \
     docker-buildx \
     megatools
 
-success "Docker and required tools installed."
+success "Required packages installed."
 
 
 # =========================================================
@@ -108,42 +155,86 @@ elif command -v service >/dev/null 2>&1; then
     success "Docker started using service."
 
 else
+
     error "Unable to start Docker automatically."
-    echo "Please start Docker manually."
+    echo
+    echo "Please start Docker manually and run this script again."
     exit 1
+
 fi
 
 
 # =========================================================
-# 確認 Docker 是否正常
+# 確認 Docker Daemon
 # =========================================================
 
-info "Checking Docker..."
+info "Checking Docker daemon..."
 
-if ! docker info >/dev/null 2>&1; then
+if docker info >/dev/null 2>&1; then
+
+    success "Docker daemon is running."
+
+else
+
     error "Docker daemon is not running."
     exit 1
+
 fi
 
-success "Docker is running."
+
+# =========================================================
+# 顯示 Docker 版本
+# =========================================================
+
+info "Docker version"
+
+docker --version
 
 
 # =========================================================
-# 建立專案目錄
+# 確認 Docker Compose
 # =========================================================
 
-info "Preparing application directory..."
+info "Checking Docker Compose..."
 
-mkdir -p "$APP_DIR"
+if docker compose version >/dev/null 2>&1; then
 
-success "Application directory: $APP_DIR"
+    docker compose version
+    success "Docker Compose is available."
+
+else
+
+    error "Docker Compose is not available."
+    exit 1
+
+fi
 
 
 # =========================================================
-# 下載 JDK
+# 確認 MEGA Tools
 # =========================================================
 
-if [ -f "$APP_DIR/$JDK_FILE" ]; then
+info "Checking MEGA Tools..."
+
+if command -v megatools >/dev/null 2>&1; then
+
+    success "MEGA Tools is available."
+
+else
+
+    error "MEGA Tools installation failed."
+    exit 1
+
+fi
+
+
+# =========================================================
+# 下載 JDK 17
+# =========================================================
+
+if [ -f "$SCRIPT_DIR/$JDK_FILE" ]; then
+
+    info "Checking $JDK_FILE..."
 
     success "$JDK_FILE already exists. Skip download."
 
@@ -151,16 +242,18 @@ else
 
     info "Downloading $JDK_FILE from MEGA..."
 
-    cd "$APP_DIR"
-
     megatools dl "$JDK_URL"
 
-    if [ ! -f "$APP_DIR/$JDK_FILE" ]; then
-        error "Failed to download $JDK_FILE"
-        exit 1
-    fi
+    if [ -f "$SCRIPT_DIR/$JDK_FILE" ]; then
 
-    success "$JDK_FILE downloaded."
+        success "$JDK_FILE downloaded successfully."
+
+    else
+
+        error "Failed to download $JDK_FILE."
+        exit 1
+
+    fi
 
 fi
 
@@ -169,7 +262,9 @@ fi
 # 下載 Backend JAR
 # =========================================================
 
-if [ -f "$APP_DIR/$JAR_FILE" ]; then
+if [ -f "$SCRIPT_DIR/$JAR_FILE" ]; then
+
+    info "Checking $JAR_FILE..."
 
     success "$JAR_FILE already exists. Skip download."
 
@@ -177,16 +272,18 @@ else
 
     info "Downloading $JAR_FILE from MEGA..."
 
-    cd "$APP_DIR"
-
     megatools dl "$JAR_URL"
 
-    if [ ! -f "$APP_DIR/$JAR_FILE" ]; then
-        error "Failed to download $JAR_FILE"
-        exit 1
-    fi
+    if [ -f "$SCRIPT_DIR/$JAR_FILE" ]; then
 
-    success "$JAR_FILE downloaded."
+        success "$JAR_FILE downloaded successfully."
+
+    else
+
+        error "Failed to download $JAR_FILE."
+        exit 1
+
+    fi
 
 fi
 
@@ -199,73 +296,43 @@ info "Pulling nginx:1.28.0..."
 
 docker pull nginx:1.28.0
 
-success "nginx:1.28.0 downloaded."
+success "nginx:1.28.0 ready."
 
 
 info "Pulling mysql:8..."
 
 docker pull mysql:8
 
-success "mysql:8 downloaded."
+success "mysql:8 ready."
 
 
 # =========================================================
-# 檢查 Docker Compose
+# 檢查 Docker Compose 設定
 # =========================================================
 
-info "Checking Docker Compose..."
+info "Validating Docker Compose configuration..."
 
-if ! docker compose version >/dev/null 2>&1; then
-    error "Docker Compose is not available."
-    exit 1
-fi
+docker compose config >/dev/null
 
-docker compose version
+success "Docker Compose configuration is valid."
 
 
 # =========================================================
-# 檢查 compose.yaml / docker-compose.yml
+# Build + 啟動專案
 # =========================================================
 
-info "Checking Docker Compose configuration..."
+info "Building and starting Employee Management System..."
 
-cd "$APP_DIR"
+docker compose up -d --build
 
-if [ -f "compose.yaml" ] || \
-   [ -f "compose.yml" ] || \
-   [ -f "docker-compose.yaml" ] || \
-   [ -f "docker-compose.yml" ]; then
-
-    success "Docker Compose configuration found."
-
-else
-
-    error "Docker Compose configuration not found in:"
-    echo "$APP_DIR"
-    echo
-    echo "Please put EmployeeManagementSystem project files into:"
-    echo "$APP_DIR"
-    exit 1
-
-fi
-
-
-# =========================================================
-# 啟動專案
-# =========================================================
-
-info "Starting EmployeeManagementSystem..."
-
-docker compose up -d
-
-success "EmployeeManagementSystem started."
+success "Employee Management System started."
 
 
 # =========================================================
 # 顯示 Container 狀態
 # =========================================================
 
-info "Docker container status"
+info "Container status"
 
 docker compose ps
 
@@ -282,16 +349,17 @@ fi
 
 
 # =========================================================
-# 完成
+# 部署完成
 # =========================================================
 
 echo
 echo "============================================================"
-echo " Installation completed successfully"
+echo " Employee Management System"
+echo " Deployment completed successfully"
 echo "============================================================"
 echo
-echo "Application directory:"
-echo "  $APP_DIR"
+echo "Project directory:"
+echo "  $SCRIPT_DIR"
 echo
 echo "Linux IP:"
 echo "  $LINUX_IP"
@@ -299,30 +367,45 @@ echo
 echo "Browser:"
 echo "  http://$LINUX_IP"
 echo
-echo "MySQL:"
-echo "  Host     : $LINUX_IP"
-echo "  Port     : 3307"
-echo "  User     : root"
-echo "  Password : 321321321"
-echo "  Database : restful"
+echo "------------------------------------------------------------"
+echo "MySQL"
+echo "------------------------------------------------------------"
+echo
+echo "Host:"
+echo "  $LINUX_IP"
+echo
+echo "Port:"
+echo "  3307"
+echo
+echo "User:"
+echo "  root"
+echo
+echo "Password:"
+echo "  321321321"
+echo
+echo "Database:"
+echo "  restful"
 echo
 echo "MySQL CLI:"
 echo "  mysql -h $LINUX_IP -P3307 -u root -p"
 echo
-echo "Start project:"
-echo "  cd $APP_DIR"
+echo "------------------------------------------------------------"
+echo "Docker Compose"
+echo "------------------------------------------------------------"
+echo
+echo "Start:"
 echo "  sudo docker compose up -d"
 echo
-echo "Stop project:"
-echo "  cd $APP_DIR"
+echo "Stop:"
 echo "  sudo docker compose down"
 echo
-echo "View containers:"
-echo "  cd $APP_DIR"
+echo "Status:"
 echo "  sudo docker compose ps"
 echo
-echo "View logs:"
-echo "  cd $APP_DIR"
+echo "Logs:"
 echo "  sudo docker compose logs -f"
+echo
+echo "Rebuild:"
+echo "  sudo docker compose up -d --build"
 echo
 echo "============================================================"
