@@ -22,6 +22,11 @@ set -Eeuo pipefail
 
 APP_DIR="/usr/local/app"
 
+MYSQL_PORT="3307"
+MYSQL_USER="root"
+MYSQL_PASSWORD="321321321"
+MYSQL_DATABASE="restful"
+
 
 # =========================================================
 # Output functions
@@ -254,6 +259,172 @@ show_menu() {
 
 
 # =========================================================
+# Get Linux IP
+# =========================================================
+
+get_linux_ip() {
+
+    local linux_ip
+
+    linux_ip="$(
+        hostname -I 2>/dev/null |
+        awk '{print $1}'
+    )"
+
+    if [ -z "$linux_ip" ]; then
+        linux_ip="<Linux-IP>"
+    fi
+
+    echo "$linux_ip"
+}
+
+
+# =========================================================
+# Show container status
+# =========================================================
+
+show_container_status() {
+
+    info "Container status"
+
+    docker compose ps
+
+}
+
+
+# =========================================================
+# Show connection information
+# =========================================================
+
+show_connection_info() {
+
+    local linux_ip
+
+    linux_ip="$(get_linux_ip)"
+
+    echo
+    echo "============================================================"
+    echo " Employee Management System"
+    echo " Running successfully"
+    echo "============================================================"
+
+    echo
+
+    echo "Deployment directory:"
+    echo "  $APP_DIR"
+
+    echo
+
+    echo "Linux IP:"
+    echo "  $linux_ip"
+
+    echo
+
+    echo "Browser:"
+    echo "  http://$linux_ip"
+
+
+    echo
+    echo "------------------------------------------------------------"
+    echo "MySQL"
+    echo "------------------------------------------------------------"
+
+    echo
+
+    echo "Host:"
+    echo "  $linux_ip"
+
+    echo
+
+    echo "Port:"
+    echo "  $MYSQL_PORT"
+
+    echo
+
+    echo "User:"
+    echo "  $MYSQL_USER"
+
+    echo
+
+    echo "Password:"
+    echo "  $MYSQL_PASSWORD"
+
+    echo
+
+    echo "Database:"
+    echo "  $MYSQL_DATABASE"
+
+    echo
+
+    echo "MySQL CLI:"
+    echo "  mysql -h $linux_ip -P$MYSQL_PORT -u $MYSQL_USER -p"
+
+
+    echo
+    echo "------------------------------------------------------------"
+    echo "Docker Compose"
+    echo "------------------------------------------------------------"
+
+    echo
+
+    echo "Start:"
+    echo "  sudo bash manage.sh"
+    echo "  → 選擇 1"
+
+    echo
+
+    echo "Stop:"
+    echo "  sudo bash manage.sh"
+    echo "  → 選擇 2"
+
+    echo
+
+    echo "Restart:"
+    echo "  sudo bash manage.sh"
+    echo "  → 選擇 3"
+
+    echo
+
+    echo "Status:"
+    echo "  sudo bash manage.sh"
+    echo "  → 選擇 4"
+
+    echo
+
+    echo "Logs:"
+    echo "  sudo bash manage.sh"
+    echo "  → 選擇 5"
+
+    echo
+
+    echo "Rebuild:"
+    echo "  sudo bash manage.sh"
+    echo "  → 選擇 9"
+
+    echo
+
+    echo "============================================================"
+
+}
+
+
+# =========================================================
+# Show project information
+#
+# Used after:
+# Start / Restart / Rebuild
+# =========================================================
+
+show_project_info() {
+
+    show_container_status
+
+    show_connection_info
+
+}
+
+
+# =========================================================
 # Start
 # =========================================================
 
@@ -265,8 +436,7 @@ start_project() {
 
     success "Employee Management System started."
 
-    echo
-    docker compose ps
+    show_project_info
 
 }
 
@@ -294,16 +464,19 @@ restart_project() {
 
     info "Restarting Employee Management System..."
 
+    echo
+    echo "Stopping containers..."
+
     docker compose down
 
     echo
+    echo "Starting containers..."
 
     docker compose up -d
 
     success "Employee Management System restarted."
 
-    echo
-    docker compose ps
+    show_project_info
 
 }
 
@@ -314,9 +487,7 @@ restart_project() {
 
 show_status() {
 
-    info "Employee Management System status"
-
-    docker compose ps
+    show_container_status
 
 }
 
@@ -333,7 +504,6 @@ show_logs() {
     echo "按 Ctrl + C 停止 Log 並返回主選單。"
     echo
 
-    # Prevent Ctrl+C from terminating manage.sh itself.
     trap '' INT
 
     docker compose logs -f || true
@@ -412,14 +582,13 @@ show_mysql_logs() {
 
 rebuild_project() {
 
-    info "Rebuilding Employee Management System..."
+    info "Building and starting Employee Management System..."
 
     docker compose up -d --build
 
-    success "Employee Management System rebuilt."
+    success "Employee Management System rebuilt and started."
 
-    echo
-    docker compose ps
+    show_project_info
 
 }
 
