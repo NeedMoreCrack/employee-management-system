@@ -4,31 +4,25 @@ set -Eeuo pipefail
 
 # =========================================================
 # Employee Management System
-# Docker 環境安裝與專案部署腳本
+# Docker Environment Installation & Deployment Script
 #
-# Git Repository:
+# GitHub:
 # https://github.com/NeedMoreCrack/employee-management-system
 #
-# 測試環境：
-#   - WSL2 Ubuntu 22.04
-#   - Ubuntu 24.04 Server
+# Deployment directory:
+# /usr/local/app
 #
-# 執行方式：
-#   sudo bash install_docker_tools.sh
-#
-# 部署位置：
-#   /usr/local/app
+# Usage:
+# sudo bash install_docker_tools.sh
 # =========================================================
 
 
 # =========================================================
-# 基本設定
+# Basic configuration
 # =========================================================
 
-# Git Clone 下來的專案位置
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# 實際 Docker 部署位置
 APP_DIR="/usr/local/app"
 
 JDK_FILE="jdk17.tar.gz"
@@ -37,9 +31,12 @@ JAR_FILE="myWeb.jar"
 JDK_URL="https://mega.nz/file/F4gGmBjC#TJqBitRWbdWubIB7fRTsCzLQoe0XxkYWWWCKXXc-Be4"
 JAR_URL="https://mega.nz/file/t8AGkDjb#OV5jHhOqXnL8xsQu77aqHeMMds6HdBkiBuzCkp3C25A"
 
+NGINX_IMAGE="nginx:1.28.0"
+MYSQL_IMAGE="mysql:8"
+
 
 # =========================================================
-# 顯示訊息
+# Output functions
 # =========================================================
 
 info() {
@@ -63,197 +60,265 @@ error() {
 
 
 # =========================================================
-# 錯誤處理
+# Error handling
 # =========================================================
 
 trap 'error "Deployment failed at line $LINENO."' ERR
 
 
 # =========================================================
-# 檢查 Root 權限
+# Root check
 # =========================================================
 
 if [ "$EUID" -ne 0 ]; then
+
     error "This script must be run as root."
+
     echo
     echo "Please run:"
-    echo "sudo bash install_docker_tools.sh"
+    echo
+    echo "  sudo bash install_docker_tools.sh"
+    echo
+
     exit 1
 fi
 
 
 # =========================================================
-# 顯示路徑
+# Deployment information
 # =========================================================
 
 info "Deployment information"
 
 echo "Source directory:"
 echo "  $SOURCE_DIR"
+
 echo
+
 echo "Deployment directory:"
 echo "  $APP_DIR"
 
 
 # =========================================================
-# 檢查來源專案
+# Check source project
 # =========================================================
 
 info "Checking source project..."
 
-if [ ! -f "$SOURCE_DIR/docker-compose.yml" ] &&
-   [ ! -f "$SOURCE_DIR/docker-compose.yaml" ] &&
-   [ ! -f "$SOURCE_DIR/compose.yml" ] &&
-   [ ! -f "$SOURCE_DIR/compose.yaml" ]; then
+
+# ---------------------------------------------------------
+# Dockerfile
+# ---------------------------------------------------------
+
+if [ ! -f "$SOURCE_DIR/Dockerfile" ]; then
+
+    error "Dockerfile not found:"
+    echo "  $SOURCE_DIR/Dockerfile"
+
+    exit 1
+fi
+
+
+# ---------------------------------------------------------
+# Docker Compose
+# ---------------------------------------------------------
+
+COMPOSE_FOUND=false
+
+for compose_file in \
+    "docker-compose.yml" \
+    "docker-compose.yaml" \
+    "compose.yml" \
+    "compose.yaml"
+do
+
+    if [ -f "$SOURCE_DIR/$compose_file" ]; then
+
+        COMPOSE_FOUND=true
+        SOURCE_COMPOSE_FILE="$compose_file"
+
+        break
+    fi
+
+done
+
+
+if [ "$COMPOSE_FOUND" = false ]; then
 
     error "Docker Compose configuration not found."
+
     echo
     echo "Source directory:"
     echo "  $SOURCE_DIR"
+
     exit 1
 fi
 
 
-if [ ! -f "$SOURCE_DIR/Dockerfile" ]; then
-    error "Dockerfile not found:"
-    echo "  $SOURCE_DIR/Dockerfile"
-    exit 1
-fi
-
+# ---------------------------------------------------------
+# Nginx
+# ---------------------------------------------------------
 
 if [ ! -f "$SOURCE_DIR/nginx/conf/nginx.conf" ]; then
+
     error "Nginx configuration not found:"
+
+    echo
     echo "  $SOURCE_DIR/nginx/conf/nginx.conf"
+
     exit 1
 fi
+
 
 success "Source project structure is valid."
 
-
-# =========================================================
-# 更新 Ubuntu 套件
-# =========================================================
-
-info "Updating package list..."
-
-apt update
-
-success "Package list updated."
+echo
+echo "Docker Compose:"
+echo "  $SOURCE_COMPOSE_FILE"
 
 
 # =========================================================
-# 安裝必要工具
+# Check required packages
 # =========================================================
 
-info "Installing required packages..."
+info "Checking required packages..."
 
-apt install -y \
-    docker.io \
-    docker-compose-v2 \
-    docker-buildx \
-    megatools
+REQUIRED_PACKAGES=(
+    "docker.io"
+    "docker-compose-v2"
+    "docker-buildx"
+    "megatools"
+)
 
-success "Required packages installed."
+MISSING_PACKAGES=()
+
+
+for package in "${REQUIRED_PACKAGES[@]}"; do
+
+    if dpkg -s "$package" >/dev/null 2>&1; then
+
+        success "$package is already installed."
+
+    else
+
+        warning "$package is not installed."
+
+        MISSING_PACKAGES+=("$package")
+
+    fi
+
+done
 
 
 # =========================================================
-# 啟動 Docker
+# Install missing packages only
 # =========================================================
 
-info "Starting Docker service..."
+if [ "${#MISSING_PACKAGES[@]}" -gt 0 ]; then
 
-if command -v systemctl >/dev/null 2>&1 &&
-   systemctl is-system-running >/dev/null 2>&1; then
+    info "Installing missing packages..."
 
-    systemctl enable docker >/dev/null 2>&1 || true
-    systemctl start docker
+    echo "Missing packages:"
 
-    success "Docker started using systemctl."
+    for package in "${MISSING_PACKAGES[@]}"; do
+        echo "  - $package"
+    done
 
-elif command -v service >/dev/null 2>&1; then
+    echo
 
-    service docker start
+    apt update
 
-    success "Docker started using service."
+    apt install -y "${MISSING_PACKAGES[@]}"
+
+    success "Missing packages installed."
 
 else
 
-    error "Unable to start Docker automatically."
-    echo
-    echo "Please start Docker manually and run this script again."
-    exit 1
+    success "All required packages are already installed."
+    echo "Skip apt update/install."
+
 fi
 
 
 # =========================================================
-# 檢查 Docker Daemon
+# Start Docker service
 # =========================================================
 
-info "Checking Docker daemon..."
+info "Checking Docker service..."
+
 
 if docker info >/dev/null 2>&1; then
-    success "Docker daemon is running."
+
+    success "Docker daemon is already running."
+
 else
-    error "Docker daemon is not running."
-    exit 1
+
+    warning "Docker daemon is not running."
+
+    echo "Trying to start Docker..."
+
+    if command -v systemctl >/dev/null 2>&1 &&
+       [ -d /run/systemd/system ]; then
+
+        systemctl enable docker >/dev/null 2>&1 || true
+        systemctl start docker
+
+    elif command -v service >/dev/null 2>&1; then
+
+        service docker start
+
+    else
+
+        error "Unable to start Docker automatically."
+
+        exit 1
+    fi
+
+
+    # -----------------------------------------------------
+    # Check again
+    # -----------------------------------------------------
+
+    if docker info >/dev/null 2>&1; then
+
+        success "Docker daemon started successfully."
+
+    else
+
+        error "Docker daemon failed to start."
+
+        exit 1
+    fi
+
 fi
 
 
 # =========================================================
-# Docker 版本
+# Docker version
 # =========================================================
 
-info "Docker version"
+info "Docker environment"
 
 docker --version
+docker compose version
+docker buildx version
 
 
 # =========================================================
-# Docker Compose
+# Prepare deployment directory
 # =========================================================
 
-info "Checking Docker Compose..."
+info "Preparing deployment directory..."
 
-if docker compose version >/dev/null 2>&1; then
-    docker compose version
-    success "Docker Compose is available."
-else
-    error "Docker Compose is not available."
-    exit 1
-fi
+mkdir -p "$APP_DIR"
+mkdir -p "$APP_DIR/mysql"
+mkdir -p "$APP_DIR/mysql/data"
+
+success "Deployment directory ready."
 
 
 # =========================================================
-# Docker Buildx
-# =========================================================
-
-info "Checking Docker Buildx..."
-
-if docker buildx version >/dev/null 2>&1; then
-    docker buildx version
-    success "Docker Buildx is available."
-else
-    error "Docker Buildx is not available."
-    exit 1
-fi
-
-
-# =========================================================
-# MEGA Tools
-# =========================================================
-
-info "Checking MEGA Tools..."
-
-if command -v megatools >/dev/null 2>&1; then
-    success "MEGA Tools is available."
-else
-    error "MEGA Tools installation failed."
-    exit 1
-fi
-
-
-# =========================================================
-# 停止舊版 Container
+# Stop old Compose project if possible
 # =========================================================
 
 if [ -f "$APP_DIR/docker-compose.yml" ] ||
@@ -261,120 +326,224 @@ if [ -f "$APP_DIR/docker-compose.yml" ] ||
    [ -f "$APP_DIR/compose.yml" ] ||
    [ -f "$APP_DIR/compose.yaml" ]; then
 
-    info "Stopping existing containers..."
+    info "Stopping existing Docker Compose project..."
 
     cd "$APP_DIR"
 
-    docker compose down || warning "Unable to stop existing containers."
-
-    success "Existing containers stopped."
+    docker compose down || warning "docker compose down returned an error."
 
 fi
 
 
 # =========================================================
-# 建立部署目錄
-# =========================================================
-
-info "Preparing deployment directory..."
-
-mkdir -p "$APP_DIR"
-
-success "Deployment directory ready."
-
-
-# =========================================================
-# 部署專案
+# Remove old containers
 #
-# 注意：
-#   mysql/data 為 MySQL 持久化資料。
-#   更新部署時不刪除此目錄。
+# Prevent:
+# Conflict. The container name "/mysql" is already in use
+# =========================================================
+
+info "Checking old containers..."
+
+OLD_CONTAINERS=(
+    "mysql"
+    "myweb-backend"
+    "myweb-frontend"
+)
+
+
+for container in "${OLD_CONTAINERS[@]}"; do
+
+    if docker container inspect "$container" >/dev/null 2>&1; then
+
+        warning "Old container found: $container"
+
+        echo "Removing:"
+        echo "  $container"
+
+        docker rm -f "$container"
+
+        success "Removed old container: $container"
+
+    else
+
+        success "Old container not found: $container"
+
+    fi
+
+done
+
+
+# =========================================================
+# Remove old network if unused
+# =========================================================
+
+info "Checking old Docker network..."
+
+NETWORK_NAME="myWeb"
+
+
+if docker network inspect "$NETWORK_NAME" >/dev/null 2>&1; then
+
+    warning "Docker network already exists: $NETWORK_NAME"
+
+    # Check if any containers are still using the network
+    NETWORK_CONTAINERS="$(
+        docker network inspect "$NETWORK_NAME" \
+            --format '{{range $id, $container := .Containers}}{{$id}} {{end}}' \
+            2>/dev/null || true
+    )"
+
+
+    if [ -z "$NETWORK_CONTAINERS" ]; then
+
+        echo "Network is not being used."
+        echo "Removing old network..."
+
+        docker network rm "$NETWORK_NAME" >/dev/null
+
+        success "Old network removed: $NETWORK_NAME"
+
+    else
+
+        warning "Network is still being used by other containers."
+        echo "Skip network removal."
+
+    fi
+
+else
+
+    success "Old network not found."
+
+fi
+
+
+# =========================================================
+# Deploy project files
 # =========================================================
 
 info "Copying project files to $APP_DIR..."
 
+
+# ---------------------------------------------------------
 # Dockerfile
-cp -f "$SOURCE_DIR/Dockerfile" "$APP_DIR/"
+# ---------------------------------------------------------
+
+cp -f \
+    "$SOURCE_DIR/Dockerfile" \
+    "$APP_DIR/Dockerfile"
 
 
+# ---------------------------------------------------------
 # Docker Compose
-if [ -f "$SOURCE_DIR/docker-compose.yml" ]; then
-    cp -f "$SOURCE_DIR/docker-compose.yml" "$APP_DIR/"
-fi
+# ---------------------------------------------------------
 
-if [ -f "$SOURCE_DIR/docker-compose.yaml" ]; then
-    cp -f "$SOURCE_DIR/docker-compose.yaml" "$APP_DIR/"
-fi
-
-if [ -f "$SOURCE_DIR/compose.yml" ]; then
-    cp -f "$SOURCE_DIR/compose.yml" "$APP_DIR/"
-fi
-
-if [ -f "$SOURCE_DIR/compose.yaml" ]; then
-    cp -f "$SOURCE_DIR/compose.yaml" "$APP_DIR/"
-fi
+cp -f \
+    "$SOURCE_DIR/$SOURCE_COMPOSE_FILE" \
+    "$APP_DIR/$SOURCE_COMPOSE_FILE"
 
 
+# ---------------------------------------------------------
 # Nginx
+# ---------------------------------------------------------
+
 rm -rf "$APP_DIR/nginx"
-cp -a "$SOURCE_DIR/nginx" "$APP_DIR/nginx"
+
+cp -a \
+    "$SOURCE_DIR/nginx" \
+    "$APP_DIR/nginx"
 
 
-# MySQL 設定
+# ---------------------------------------------------------
+# MySQL
+#
+# mysql/data is intentionally preserved.
+# ---------------------------------------------------------
+
 mkdir -p "$APP_DIR/mysql"
 
-rm -rf "$APP_DIR/mysql/conf"
-rm -rf "$APP_DIR/mysql/init"
 
 if [ -d "$SOURCE_DIR/mysql/conf" ]; then
-    cp -a "$SOURCE_DIR/mysql/conf" "$APP_DIR/mysql/conf"
+
+    rm -rf "$APP_DIR/mysql/conf"
+
+    cp -a \
+        "$SOURCE_DIR/mysql/conf" \
+        "$APP_DIR/mysql/conf"
+
 fi
+
 
 if [ -d "$SOURCE_DIR/mysql/init" ]; then
-    cp -a "$SOURCE_DIR/mysql/init" "$APP_DIR/mysql/init"
+
+    rm -rf "$APP_DIR/mysql/init"
+
+    cp -a \
+        "$SOURCE_DIR/mysql/init" \
+        "$APP_DIR/mysql/init"
+
 fi
 
 
-# MySQL Data 必須保留
 mkdir -p "$APP_DIR/mysql/data"
 
 
-# 如果專案還有其他一般檔案，複製到部署目錄
-# 排除：
-#   .git
-#   nginx
-#   mysql
-#   jdk17.tar.gz
-#   myWeb.jar
+# ---------------------------------------------------------
+# Copy other project files
 #
-# 大型檔案由 MEGA 下載。
+# Excluded:
+#
+# .git
+# nginx
+# mysql
+# jdk17.tar.gz
+# myWeb.jar
+#
+# Large files are handled separately.
+# ---------------------------------------------------------
 
-for item in "$SOURCE_DIR"/* "$SOURCE_DIR"/.[!.]* "$SOURCE_DIR"/..?*; do
+for item in \
+    "$SOURCE_DIR"/* \
+    "$SOURCE_DIR"/.[!.]* \
+    "$SOURCE_DIR"/..?*
+do
 
     [ -e "$item" ] || continue
 
     name="$(basename "$item")"
 
+
     case "$name" in
 
-        ".git"|"nginx"|"mysql"|"$JDK_FILE"|"$JAR_FILE")
-            continue
-            ;;
+        ".git" | \
+        "nginx" | \
+        "mysql" | \
+        "$JDK_FILE" | \
+        "$JAR_FILE" | \
+        "Dockerfile" | \
+        "docker-compose.yml" | \
+        "docker-compose.yaml" | \
+        "compose.yml" | \
+        "compose.yaml")
 
-        "Dockerfile"|"docker-compose.yml"|"docker-compose.yaml"|"compose.yml"|"compose.yaml")
             continue
             ;;
 
     esac
 
+
     if [ -d "$item" ]; then
 
         rm -rf "$APP_DIR/$name"
-        cp -a "$item" "$APP_DIR/$name"
+
+        cp -a \
+            "$item" \
+            "$APP_DIR/$name"
 
     elif [ -f "$item" ]; then
 
-        cp -f "$item" "$APP_DIR/$name"
+        cp -f \
+            "$item" \
+            "$APP_DIR/$name"
 
     fi
 
@@ -385,94 +554,254 @@ success "Project files deployed to $APP_DIR."
 
 
 # =========================================================
-# 確認部署後 Nginx 設定
+# Check deployed files
 # =========================================================
 
-info "Checking deployed Nginx configuration..."
+info "Checking deployed project..."
 
-if [ ! -f "$APP_DIR/nginx/conf/nginx.conf" ]; then
-    error "Nginx configuration deployment failed:"
-    echo "  $APP_DIR/nginx/conf/nginx.conf"
+
+if [ ! -f "$APP_DIR/Dockerfile" ]; then
+
+    error "Dockerfile deployment failed."
+
     exit 1
 fi
 
-success "Nginx configuration is ready."
 
+if [ ! -f "$APP_DIR/$SOURCE_COMPOSE_FILE" ]; then
 
-# =========================================================
-# 下載 JDK 17
-# =========================================================
+    error "Docker Compose deployment failed."
 
-cd "$APP_DIR"
-
-if [ -f "$APP_DIR/$JDK_FILE" ]; then
-
-    info "Checking $JDK_FILE..."
-
-    success "$JDK_FILE already exists. Skip download."
-
-else
-
-    info "Downloading $JDK_FILE from MEGA..."
-
-    megatools dl "$JDK_URL"
-
-    if [ -f "$APP_DIR/$JDK_FILE" ]; then
-        success "$JDK_FILE downloaded successfully."
-    else
-        error "Failed to download $JDK_FILE."
-        exit 1
-    fi
-
+    exit 1
 fi
 
 
-# =========================================================
-# 下載 Backend JAR
-# =========================================================
+if [ ! -f "$APP_DIR/nginx/conf/nginx.conf" ]; then
 
-if [ -f "$APP_DIR/$JAR_FILE" ]; then
+    error "Nginx configuration deployment failed."
 
-    info "Checking $JAR_FILE..."
+    echo
+    echo "Expected:"
+    echo "  $APP_DIR/nginx/conf/nginx.conf"
 
-    success "$JAR_FILE already exists. Skip download."
-
-else
-
-    info "Downloading $JAR_FILE from MEGA..."
-
-    megatools dl "$JAR_URL"
-
-    if [ -f "$APP_DIR/$JAR_FILE" ]; then
-        success "$JAR_FILE downloaded successfully."
-    else
-        error "Failed to download $JAR_FILE."
-        exit 1
-    fi
-
+    exit 1
 fi
 
 
-# =========================================================
-# Pull Docker Images
-# =========================================================
-
-info "Pulling nginx:1.28.0..."
-
-docker pull nginx:1.28.0
-
-success "nginx:1.28.0 ready."
-
-
-info "Pulling mysql:8..."
-
-docker pull mysql:8
-
-success "mysql:8 ready."
+success "Deployed project structure is valid."
 
 
 # =========================================================
-# 驗證 Docker Compose
+# Prepare large files
+#
+# Priority:
+#
+# 1. Deployment directory already contains file
+# 2. Source directory contains file
+# 3. Download from MEGA
+# =========================================================
+
+prepare_large_file() {
+
+    local filename="$1"
+    local url="$2"
+
+    local app_file="$APP_DIR/$filename"
+    local source_file="$SOURCE_DIR/$filename"
+
+
+    info "Checking large file: $filename"
+
+
+    # -----------------------------------------------------
+    # Deployment directory
+    # -----------------------------------------------------
+
+    if [ -s "$app_file" ]; then
+
+        success "$filename already exists."
+
+        echo
+        echo "File:"
+        echo "  $app_file"
+
+        echo
+        echo "Size:"
+        du -h "$app_file"
+
+        echo
+        echo "Skip MEGA download."
+
+        return 0
+
+    fi
+
+
+    # -----------------------------------------------------
+    # Remove empty / broken zero-byte file
+    # -----------------------------------------------------
+
+    if [ -f "$app_file" ]; then
+
+        warning "Empty file detected:"
+        echo "  $app_file"
+
+        rm -f "$app_file"
+
+    fi
+
+
+    # -----------------------------------------------------
+    # Source directory
+    # -----------------------------------------------------
+
+    if [ -s "$source_file" ]; then
+
+        success "$filename found in source directory."
+
+        echo
+        echo "Source:"
+        echo "  $source_file"
+
+        echo
+        echo "Copying to:"
+        echo "  $app_file"
+
+        cp -f \
+            "$source_file" \
+            "$app_file"
+
+
+        if [ -s "$app_file" ]; then
+
+            success "$filename copied successfully."
+
+            echo
+            echo "Size:"
+            du -h "$app_file"
+
+            return 0
+
+        else
+
+            error "Failed to copy $filename."
+
+            exit 1
+        fi
+
+    fi
+
+
+    # -----------------------------------------------------
+    # MEGA
+    # -----------------------------------------------------
+
+    warning "$filename was not found locally."
+
+    echo
+    echo "Downloading from MEGA..."
+
+    cd "$APP_DIR"
+
+
+    # Remove possible partial file
+    rm -f "$app_file"
+
+
+    megatools dl "$url"
+
+
+    if [ -s "$app_file" ]; then
+
+        success "$filename downloaded successfully."
+
+        echo
+        echo "Size:"
+        du -h "$app_file"
+
+    else
+
+        error "Failed to download $filename."
+
+        exit 1
+    fi
+}
+
+
+# =========================================================
+# Prepare JDK / Backend JAR
+# =========================================================
+
+prepare_large_file \
+    "$JDK_FILE" \
+    "$JDK_URL"
+
+
+prepare_large_file \
+    "$JAR_FILE" \
+    "$JAR_URL"
+
+
+# =========================================================
+# Docker image cache
+# =========================================================
+
+check_or_pull_image() {
+
+    local image="$1"
+
+    info "Checking Docker image: $image"
+
+
+    if docker image inspect "$image" >/dev/null 2>&1; then
+
+        success "Docker image already exists:"
+        echo "  $image"
+
+        echo
+        echo "Skip docker pull."
+
+        return 0
+
+    fi
+
+
+    warning "Docker image not found:"
+    echo "  $image"
+
+    echo
+    echo "Pulling Docker image..."
+
+
+    docker pull "$image"
+
+
+    if docker image inspect "$image" >/dev/null 2>&1; then
+
+        success "Docker image downloaded successfully:"
+        echo "  $image"
+
+    else
+
+        error "Docker image download failed:"
+        echo "  $image"
+
+        exit 1
+    fi
+}
+
+
+# =========================================================
+# Check required Docker images
+# =========================================================
+
+check_or_pull_image "$NGINX_IMAGE"
+
+check_or_pull_image "$MYSQL_IMAGE"
+
+
+# =========================================================
+# Validate Docker Compose
 # =========================================================
 
 info "Validating Docker Compose configuration..."
@@ -485,7 +814,7 @@ success "Docker Compose configuration is valid."
 
 
 # =========================================================
-# Build + 啟動專案
+# Build and start
 # =========================================================
 
 info "Building and starting Employee Management System..."
@@ -496,7 +825,7 @@ success "Employee Management System started."
 
 
 # =========================================================
-# Container 狀態
+# Container status
 # =========================================================
 
 info "Container status"
@@ -505,10 +834,14 @@ docker compose ps
 
 
 # =========================================================
-# 取得 Linux IP
+# Linux IP
 # =========================================================
 
-LINUX_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+LINUX_IP="$(
+    hostname -I 2>/dev/null |
+    awk '{print $1}'
+)"
+
 
 if [ -z "$LINUX_IP" ]; then
     LINUX_IP="<Linux-IP>"
@@ -516,7 +849,7 @@ fi
 
 
 # =========================================================
-# 完成
+# Deployment completed
 # =========================================================
 
 echo
@@ -524,61 +857,99 @@ echo "============================================================"
 echo " Employee Management System"
 echo " Deployment completed successfully"
 echo "============================================================"
+
 echo
+
 echo "Source directory:"
 echo "  $SOURCE_DIR"
+
 echo
+
 echo "Deployment directory:"
 echo "  $APP_DIR"
+
 echo
+
 echo "Linux IP:"
 echo "  $LINUX_IP"
+
 echo
+
 echo "Browser:"
 echo "  http://$LINUX_IP"
+
+
 echo
 echo "------------------------------------------------------------"
 echo "MySQL"
 echo "------------------------------------------------------------"
+
 echo
+
 echo "Host:"
 echo "  $LINUX_IP"
+
 echo
+
 echo "Port:"
 echo "  3307"
+
 echo
+
 echo "User:"
 echo "  root"
+
 echo
+
 echo "Password:"
 echo "  321321321"
+
 echo
+
 echo "Database:"
 echo "  restful"
+
 echo
+
 echo "MySQL CLI:"
 echo "  mysql -h $LINUX_IP -P3307 -u root -p"
+
+
 echo
 echo "------------------------------------------------------------"
 echo "Docker Compose"
 echo "------------------------------------------------------------"
+
 echo
+
 echo "Deployment directory:"
 echo "  cd $APP_DIR"
+
 echo
+
 echo "Start:"
 echo "  sudo docker compose up -d"
+
 echo
+
 echo "Stop:"
 echo "  sudo docker compose down"
+
 echo
+
 echo "Status:"
 echo "  sudo docker compose ps"
+
 echo
+
 echo "Logs:"
 echo "  sudo docker compose logs -f"
+
 echo
+
 echo "Rebuild:"
 echo "  sudo docker compose up -d --build"
+
 echo
+
 echo "============================================================"
