@@ -28,8 +28,11 @@ APP_DIR="/usr/local/app"
 JDK_FILE="jdk17.tar.gz"
 JAR_FILE="myWeb.jar"
 
-JDK_URL="https://mega.nz/file/F4gGmBjC#TJqBitRWbdWubIB7fRTsCzLQoe0XxkYWWWCKXXc-Be4"
-JAR_URL="https://mega.nz/file/t8AGkDjb#OV5jHhOqXnL8xsQu77aqHeMMds6HdBkiBuzCkp3C25A"
+JDK_IMAGE="codeishard/jdk17-file:17"
+JAR_IMAGE="codeishard/myweb-file:latest"
+
+JDK_IMAGE_PATH="/files/jdk17.tar.gz"
+JAR_IMAGE_PATH="/files/myWeb.jar"
 
 NGINX_IMAGE="nginx:1.28.0"
 MYSQL_IMAGE="mysql:8"
@@ -187,7 +190,6 @@ REQUIRED_PACKAGES=(
     "docker.io"
     "docker-compose-v2"
     "docker-buildx"
-    "megatools"
 )
 
 MISSING_PACKAGES=()
@@ -598,16 +600,22 @@ success "Deployed project structure is valid."
 #
 # 1. Deployment directory already contains file
 # 2. Source directory contains file
-# 3. Download from MEGA
+# 3. Extract file from Docker Hub image
 # =========================================================
 
 prepare_large_file() {
 
     local filename="$1"
-    local url="$2"
+    local image="$2"
+    local image_path="$3"
 
     local app_file="$APP_DIR/$filename"
     local source_file="$SOURCE_DIR/$filename"
+
+    local safe_name
+    safe_name="${filename//[^a-zA-Z0-9]/-}"
+
+    local temp_container="ems-file-${safe_name}"
 
 
     info "Checking large file: $filename"
@@ -630,10 +638,9 @@ prepare_large_file() {
         du -h "$app_file"
 
         echo
-        echo "Skip MEGA download."
+        echo "Skip Docker Hub download."
 
         return 0
-
     fi
 
 
@@ -647,7 +654,6 @@ prepare_large_file() {
         echo "  $app_file"
 
         rm -f "$app_file"
-
     fi
 
 
@@ -688,32 +694,123 @@ prepare_large_file() {
 
             exit 1
         fi
-
     fi
 
 
     # -----------------------------------------------------
-    # MEGA
+    # Docker Hub image
     # -----------------------------------------------------
 
     warning "$filename was not found locally."
 
     echo
-    echo "Downloading from MEGA..."
+    echo "Docker image:"
+    echo "  $image"
 
-    cd "$APP_DIR"
+    echo
+    echo "Image file:"
+    echo "  $image_path"
 
 
-    # Remove possible partial file
-    rm -f "$app_file"
+    # -----------------------------------------------------
+    # Pull image only when not available locally
+    # -----------------------------------------------------
+
+    if docker image inspect "$image" >/dev/null 2>&1; then
+
+        success "Docker image already exists locally:"
+        echo "  $image"
+
+        echo
+        echo "Skip docker pull."
+
+    else
+
+        echo
+        echo "Pulling Docker image..."
+
+        docker pull "$image"
+
+        if ! docker image inspect "$image" >/dev/null 2>&1; then
+
+            error "Docker image download failed:"
+            echo "  $image"
+
+            exit 1
+        fi
+
+        success "Docker image downloaded successfully:"
+        echo "  $image"
+    fi
 
 
-    megatools dl "$url"
+    # -----------------------------------------------------
+    # Remove possible old temporary container
+    # -----------------------------------------------------
 
+    if docker container inspect "$temp_container" >/dev/null 2>&1; then
+
+        warning "Old temporary container found:"
+        echo "  $temp_container"
+
+        docker rm -f "$temp_container" >/dev/null
+    fi
+
+
+    # -----------------------------------------------------
+    # Create temporary container
+    #
+    # The image uses FROM scratch and has no CMD,
+    # therefore a dummy command must be specified.
+    # The container is never started.
+    # -----------------------------------------------------
+
+    echo
+    echo "Creating temporary container..."
+
+    docker create \
+        --name "$temp_container" \
+        "$image" \
+        /bin/true \
+        >/dev/null
+
+
+    # -----------------------------------------------------
+    # Extract file
+    # -----------------------------------------------------
+
+    echo
+    echo "Extracting $filename from Docker image..."
+
+    if docker cp \
+        "$temp_container:$image_path" \
+        "$app_file"
+    then
+
+        docker rm "$temp_container" >/dev/null
+
+    else
+
+        error "Failed to extract $filename from Docker image."
+
+        docker rm -f "$temp_container" >/dev/null 2>&1 || true
+        rm -f "$app_file"
+
+        exit 1
+    fi
+
+
+    # -----------------------------------------------------
+    # Validate extracted file
+    # -----------------------------------------------------
 
     if [ -s "$app_file" ]; then
 
-        success "$filename downloaded successfully."
+        success "$filename extracted successfully."
+
+        echo
+        echo "File:"
+        echo "  $app_file"
 
         echo
         echo "Size:"
@@ -721,7 +818,10 @@ prepare_large_file() {
 
     else
 
-        error "Failed to download $filename."
+        error "Extracted file is missing or empty:"
+        echo "  $app_file"
+
+        rm -f "$app_file"
 
         exit 1
     fi
@@ -734,12 +834,14 @@ prepare_large_file() {
 
 prepare_large_file \
     "$JDK_FILE" \
-    "$JDK_URL"
+    "$JDK_IMAGE" \
+    "$JDK_IMAGE_PATH"
 
 
 prepare_large_file \
     "$JAR_FILE" \
-    "$JAR_URL"
+    "$JAR_IMAGE" \
+    "$JAR_IMAGE_PATH"
 
 
 # =========================================================
