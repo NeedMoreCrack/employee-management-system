@@ -26,6 +26,34 @@ GitHub Repository 可以 Clone 至任意位置。
 例如：
 
 ```text
+# Employee Management System
+
+Employee Management System 使用 Docker Compose 建立執行環境。
+
+專案包含：
+
+- Backend
+- Frontend
+- MySQL
+- Nginx
+
+專案提供自動部署腳本：
+
+```text
+install_docker_tools.sh
+```
+
+部署腳本會自動檢查 Docker 執行環境、將專案部署至 `/usr/local/app`、準備大型檔案、檢查 Docker Image、Build Backend Image，並啟動所有 Container。
+
+---
+
+# 部署架構
+
+GitHub Repository 可以 Clone 至任意位置。
+
+例如：
+
+```text
 /home/ubuntu/employee-management-system
 ```
 
@@ -144,6 +172,10 @@ macOS 使用 UTM 建立 Ubuntu VM：
 Ubuntu 24.04.2 Server AMD64
 ```
 
+## Multipass
+
+另使用 Multipass 建立全新 Ubuntu 環境，驗證初始化部署流程可正常完成。
+
 ---
 
 # 快速部署
@@ -185,7 +217,7 @@ sudo bash install_docker_tools.sh
 `install_docker_tools.sh` 會自動執行：
 
 1. 檢查專案必要檔案
-2. 檢查 Docker、Docker Compose V2、Docker Buildx、MEGA Tools
+2. 檢查 Docker、Docker Compose V2、Docker Buildx
 3. 僅安裝目前缺少的套件
 4. 檢查 Docker Daemon
 5. Docker 尚未啟動時自動啟動 Docker Service
@@ -199,7 +231,7 @@ sudo bash install_docker_tools.sh
 13. 更新 Nginx Config 與 HTML
 14. 檢查 `jdk17.tar.gz`
 15. 檢查 `myWeb.jar`
-16. 本機不存在大型檔案時才透過 MEGA 下載
+16. 若大型檔案在 Deployment Directory 或 Git Repository 都不存在，則從 Docker Hub Image 取得
 17. 檢查 `nginx:1.28.0`
 18. 檢查 `mysql:8`
 19. Docker Image 不存在時才執行 Pull
@@ -226,7 +258,6 @@ sudo bash install_docker_tools.sh
 docker.io
 docker-compose-v2
 docker-buildx
-megatools
 ```
 
 如果全部已安裝：
@@ -244,9 +275,16 @@ Skip apt update/install.
 會檢查：
 
 ```text
+codeishard/jdk17-file:17
+codeishard/myweb-file:latest
 nginx:1.28.0
 mysql:8
 ```
+
+其中：
+
+- `codeishard/jdk17-file:17`：保存 `jdk17.tar.gz`
+- `codeishard/myweb-file:latest`：保存 `myWeb.jar`
 
 如果 Image 已存在：
 
@@ -267,6 +305,8 @@ docker pull
 如需手動更新：
 
 ```bash
+sudo docker pull codeishard/jdk17-file:17
+sudo docker pull codeishard/myweb-file:latest
 sudo docker pull nginx:1.28.0
 sudo docker pull mysql:8
 ```
@@ -317,6 +357,18 @@ jdk17.tar.gz
 
 Docker Build 使用的指定 JDK 17。
 
+Docker Hub Image：
+
+```text
+codeishard/jdk17-file:17
+```
+
+Image 內檔案位置：
+
+```text
+/files/jdk17.tar.gz
+```
+
 ## Backend JAR
 
 ```text
@@ -324,6 +376,18 @@ myWeb.jar
 ```
 
 Backend 專案的 JAR。
+
+Docker Hub Image：
+
+```text
+codeishard/myweb-file:latest
+```
+
+Image 內檔案位置：
+
+```text
+/files/myWeb.jar
+```
 
 部署腳本會自動處理這兩個檔案。
 
@@ -346,10 +410,19 @@ Git Repository
         └── No
              │
              ▼
-           MEGA
+Docker Hub Image
+        │
+        ├── codeishard/jdk17-file:17
+        │       └── /files/jdk17.tar.gz
+        │
+        └── codeishard/myweb-file:latest
+                └── /files/myWeb.jar
              │
              ▼
-         Download
+      docker create / docker cp
+             │
+             ▼
+       /usr/local/app
 ```
 
 因此如果：
@@ -374,37 +447,50 @@ Git Repository
 /usr/local/app
 ```
 
-只有兩個位置都不存在時，才會透過 MEGA 下載。
+只有 Deployment Directory 與 Git Repository 都不存在大型檔案時，才會從 Docker Hub Pull 對應的檔案 Image，建立暫時 Container，再透過 `docker cp` 將檔案取出。
+
+> 這兩個 Docker Image 使用 `FROM scratch` 作為檔案載體，本身不是應用程式 Runtime Image。部署腳本只會建立暫時 Container 來取出檔案，不會啟動該 Container。
 
 ---
 
-# 手動下載大型檔案
+# 手動取得大型檔案
 
-如果 MEGA 自動下載失敗，可以手動處理。
+一般情況下不需要手動處理，`install_docker_tools.sh` 會自動完成。
 
-安裝 MEGA Tools：
+如果需要手動從 Docker Hub 取出大型檔案，可以使用以下方式。
+
+## JDK 17
 
 ```bash
-sudo apt update
-sudo apt install megatools -y
+sudo docker pull codeishard/jdk17-file:17
+
+sudo docker create \
+  --name temp-jdk17-file \
+  codeishard/jdk17-file:17 \
+  /bin/true
+
+sudo docker cp \
+  temp-jdk17-file:/files/jdk17.tar.gz \
+  /usr/local/app/jdk17.tar.gz
+
+sudo docker rm temp-jdk17-file
 ```
 
-進入部署目錄：
+## Backend JAR
 
 ```bash
-cd /usr/local/app
-```
+sudo docker pull codeishard/myweb-file:latest
 
-## 下載 JDK 17
+sudo docker create \
+  --name temp-myweb-file \
+  codeishard/myweb-file:latest \
+  /bin/true
 
-```bash
-sudo megatools dl 'https://mega.nz/file/F4gGmBjC#TJqBitRWbdWubIB7fRTsCzLQoe0XxkYWWWCKXXc-Be4'
-```
+sudo docker cp \
+  temp-myweb-file:/files/myWeb.jar \
+  /usr/local/app/myWeb.jar
 
-## 下載 Backend JAR
-
-```bash
-sudo megatools dl 'https://mega.nz/file/t8AGkDjb#OV5jHhOqXnL8xsQu77aqHeMMds6HdBkiBuzCkp3C25A'
+sudo docker rm temp-myweb-file
 ```
 
 確認：
@@ -877,6 +963,8 @@ sudo bash install_docker_tools.sh
 ```text
 jdk17.tar.gz
 myWeb.jar
+codeishard/jdk17-file:17
+codeishard/myweb-file:latest
 nginx:1.28.0
 mysql:8
 ```
@@ -931,7 +1019,7 @@ mysql:8
 
 ## 2026-09-24
 
-重新整理自動部署流程。
+重新整理自動部署流程（當時大型檔案仍使用 MEGA）。
 
 主要修改：
 
@@ -966,3 +1054,20 @@ mysql:8
 - 顯示 MySQL 連線資訊
 - 補充 Docker Daemon Socket 權限說明
 - Docker 日常操作統一從 `/usr/local/app` 執行
+
+## 2026-09-28
+
+大型檔案下載來源由 MEGA 改為 Docker Hub。
+
+主要修改：
+
+- 移除 `megatools` 相依套件
+- 移除 MEGA 下載流程與下載網址
+- 新增 `codeishard/jdk17-file:17`
+- 新增 `codeishard/myweb-file:latest`
+- `jdk17.tar.gz` 改由 Docker Hub Image 提供
+- `myWeb.jar` 改由 Docker Hub Image 提供
+- 大型檔案取得優先順序維持：Deployment Directory → Git Repository → Docker Hub
+- Docker Hub Image 不存在於本機時才執行 Pull
+- 透過暫時 Container 與 `docker cp` 取出大型檔案
+- 已使用 Multipass 全新 Ubuntu 環境驗證初始化部署成功
