@@ -1,684 +1,137 @@
-#!/bin/bash
 
+#!/usr/bin/env bash
 set -Eeuo pipefail
 
-# =========================================================
-# Employee Management System
-# Docker Compose Management Script
-#
-# Usage:
-#
-# sudo bash manage.sh
-#
-# Deployment directory:
-#
-# /usr/local/app
-# =========================================================
-
-
-# =========================================================
-# Configuration
-# =========================================================
-
+# Employee Management System - Docker Compose management (WSL / Alpine / Podroid)
+# Usage: sudo bash manage.sh (or bash manage.sh when already root)
 APP_DIR="/usr/local/app"
-
 MYSQL_PORT="3307"
 MYSQL_USER="root"
-MYSQL_PASSWORD="321321321"
 MYSQL_DATABASE="restful"
 
+info() { printf '\n============================================================\n[INFO] %s\n============================================================\n' "$*"; }
+success() { printf '\n[OK] %s\n' "$*"; }
+warning() { printf '\n[WARNING] %s\n' "$*" >&2; }
+die() { printf '\n[ERROR] %s\n' "$*" >&2; exit 1; }
 
-# =========================================================
-# Output functions
-# =========================================================
-
-info() {
-    echo
-    echo "============================================================"
-    echo "[INFO] $1"
-    echo "============================================================"
-}
-
-success() {
-    echo
-    echo "[OK] $1"
-}
-
-warning() {
-    echo
-    echo "[WARNING] $1"
-}
-
-error() {
-    echo
-    echo "[ERROR] $1" >&2
-}
-
-
-# =========================================================
-# Root check
-# =========================================================
-
-if [ "$EUID" -ne 0 ]; then
-
-    error "This script must be run as root."
-
-    echo
-    echo "Please run:"
-    echo
-    echo "  sudo bash manage.sh"
-    echo
-
-    exit 1
-fi
-
-
-# =========================================================
-# Check deployment directory
-# =========================================================
-
-if [ ! -d "$APP_DIR" ]; then
-
-    error "Deployment directory does not exist."
-
-    echo
-    echo "Expected:"
-    echo
-    echo "  $APP_DIR"
-
-    echo
-    echo "Please deploy the project first:"
-    echo
-    echo "  sudo bash install_docker_tools.sh"
-    echo
-
-    exit 1
-fi
-
-
-# =========================================================
-# Find Docker Compose file
-# =========================================================
-
+[[ $EUID -eq 0 ]] || die "Run as root: sudo bash manage.sh"
+[[ -d "$APP_DIR" ]] || die "Deployment directory not found: $APP_DIR. Run install_docker_tools.sh first."
 COMPOSE_FILE=""
-
-for file in \
-    "docker-compose.yml" \
-    "docker-compose.yaml" \
-    "compose.yml" \
-    "compose.yaml"
-do
-
-    if [ -f "$APP_DIR/$file" ]; then
-        COMPOSE_FILE="$APP_DIR/$file"
-        break
-    fi
-
+for file in docker-compose.yml docker-compose.yaml compose.yml compose.yaml; do
+  if [[ -f "$APP_DIR/$file" ]]; then COMPOSE_FILE="$APP_DIR/$file"; break; fi
 done
-
-
-if [ -z "$COMPOSE_FILE" ]; then
-
-    error "Docker Compose configuration not found."
-
-    echo
-    echo "Deployment directory:"
-    echo
-    echo "  $APP_DIR"
-
-    echo
-    echo "Please run deployment again:"
-    echo
-    echo "  sudo bash install_docker_tools.sh"
-    echo
-
-    exit 1
-fi
-
-
-# =========================================================
-# Check Docker
-# =========================================================
-
-if ! command -v docker >/dev/null 2>&1; then
-
-    error "Docker is not installed."
-
-    echo
-    echo "Please run:"
-    echo
-    echo "  sudo bash install_docker_tools.sh"
-    echo
-
-    exit 1
-fi
-
-
-# =========================================================
-# Check Docker daemon
-# =========================================================
-
-if ! docker info >/dev/null 2>&1; then
-
-    error "Docker daemon is not running."
-
-    echo
-    echo "Try:"
-    echo
-    echo "  sudo systemctl start docker"
-    echo
-
-    exit 1
-fi
-
-
-# =========================================================
-# Check Docker Compose
-# =========================================================
-
-if ! docker compose version >/dev/null 2>&1; then
-
-    error "Docker Compose V2 is not available."
-
-    exit 1
-fi
-
-
-# =========================================================
-# Change to deployment directory
-# =========================================================
-
+[[ -n "$COMPOSE_FILE" ]] || die "Docker Compose configuration not found in $APP_DIR"
+command -v docker >/dev/null 2>&1 || die "Docker is not installed"
+docker info >/dev/null 2>&1 || die "Docker daemon is not running"
+docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is unavailable"
 cd "$APP_DIR"
 
-
-# =========================================================
-# Pause
-# =========================================================
-
-pause() {
-
-    echo
-    read -r -p "按 Enter 返回主選單..." _
-
-}
-
-
-# =========================================================
-# Header
-# =========================================================
-
-show_header() {
-
-    clear 2>/dev/null || true
-
-    echo "============================================================"
-    echo " Employee Management System"
-    echo " Docker Management"
-    echo "============================================================"
-
-    echo
-    echo "Deployment:"
-    echo "  $APP_DIR"
-
-    echo
-
-}
-
-
-# =========================================================
-# Show menu
-# =========================================================
-
-show_menu() {
-
-    echo "------------------------------------------------------------"
-    echo "請選擇操作："
-    echo "------------------------------------------------------------"
-
-    echo
-    echo "1) 啟動專案"
-    echo "2) 關閉專案"
-    echo "3) 重啟專案"
-    echo "4) 查看 Container 狀態"
-
-    echo
-    echo "5) 查看全部 Log"
-    echo "6) 查看 Backend Log"
-    echo "7) 查看 Frontend Log"
-    echo "8) 查看 MySQL Log"
-
-    echo
-    echo "9) Rebuild 專案"
-
-    echo
-    echo "0) 離開"
-
-    echo
-
-}
-
-
-# =========================================================
-# Get Linux IP
-# =========================================================
+# Explicit -f and --project-directory keep all actions on the deployed project.
+compose() { docker compose -f "$COMPOSE_FILE" --project-directory "$APP_DIR" "$@"; }
 
 get_linux_ip() {
-
-    local linux_ip
-
-    linux_ip="$(
-        hostname -I 2>/dev/null |
-        awk '{print $1}'
-    )"
-
-    if [ -z "$linux_ip" ]; then
-        linux_ip="<Linux-IP>"
-    fi
-
-    echo "$linux_ip"
+  local found=""
+  if command -v ip >/dev/null 2>&1; then
+    found="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}' || true)"
+  fi
+  if [[ -z "$found" ]]; then found="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"; fi
+  if [[ -z "$found" ]] && command -v ip >/dev/null 2>&1; then
+    found="$(ip -4 -o addr show scope global 2>/dev/null | awk 'NR==1 {split($4,a,"/"); print a[1]}' || true)"
+  fi
+  printf '%s\n' "${found:-unavailable}"
 }
 
-
-# =========================================================
-# Container status
-# =========================================================
-
-show_container_status() {
-
-    info "Container status"
-
-    docker compose ps
-
+pause() { printf '\n'; read -r -p '按 Enter 返回主選單...' _ || true; }
+show_header() {
+  clear 2>/dev/null || true
+  printf '============================================================\n Employee Management System\n Docker Management\n============================================================\n'
+  printf 'Deployment: %s\n\n' "$APP_DIR"
 }
+show_menu() {
+  cat <<'MENU'
+------------------------------------------------------------
+請選擇操作：
+------------------------------------------------------------
+1) 啟動專案
+2) 關閉專案
+3) 重啟專案
+4) 查看 Container 狀態
 
+5) 查看全部 Log
+6) 查看 Backend Log
+7) 查看 Frontend Log
+8) 查看 MySQL Log
 
-# =========================================================
-# Connection information
-# =========================================================
-
+9) Rebuild 專案
+0) 離開
+MENU
+  printf '\n'
+}
+show_container_status() { info 'Container status'; compose ps; }
 show_connection_info() {
-
-    local linux_ip
-
-    linux_ip="$(get_linux_ip)"
-
-    echo
-    echo "============================================================"
-    echo " Employee Management System"
-    echo " Running successfully"
-    echo "============================================================"
-
-    echo
-    echo "Browser:"
-    echo "  http://$linux_ip"
-
-    echo
-    echo "------------------------------------------------------------"
-    echo " MySQL"
-    echo "------------------------------------------------------------"
-
-    echo
-    printf "%-11s %s\n" "Host:" "$linux_ip"
-    printf "%-11s %s\n" "Port:" "$MYSQL_PORT"
-    printf "%-11s %s\n" "User:" "$MYSQL_USER"
-    printf "%-11s %s\n" "Password:" "$MYSQL_PASSWORD"
-    printf "%-11s %s\n" "Database:" "$MYSQL_DATABASE"
-
-    echo
-    echo "MySQL CLI:"
-    echo "  mysql -h $linux_ip -P$MYSQL_PORT -u $MYSQL_USER -p"
-
-    echo
-    echo "============================================================"
-
+  local linux_ip
+  linux_ip="$(get_linux_ip)"
+  printf '\n============================================================\n Employee Management System - Connection Information\n============================================================\n'
+  printf 'Linux internal IP: %s\n' "$linux_ip"
+  printf '\n[LOCAL ACCESS IN LINUX]\nFrontend: http://127.0.0.1:80/\nBackend:  http://127.0.0.1:9090/\n'
+  printf '\n[MYSQL]\nHost (in Linux): 127.0.0.1\nPort: %s\nUser: %s\nDatabase: %s\n' "$MYSQL_PORT" "$MYSQL_USER" "$MYSQL_DATABASE"
+  printf 'Password: (not displayed; see your local Compose/.env configuration)\n'
+  printf 'CLI (if mysql client installed): mysql -h 127.0.0.1 -P%s -u %s -p\n' "$MYSQL_PORT" "$MYSQL_USER"
+  if [[ "$linux_ip" == 10.0.2.* ]]; then
+    printf '\n[PODROID / VIRTUAL NETWORK]\n'
+    printf 'The Linux internal IP is NOT automatically the Android Wi-Fi IP.\n'
+    printf 'For Windows access, forward Android ports or create an SSH tunnel:\n'
+    printf '  ssh -N -p SSH_PORT -L 18080:127.0.0.1:80 -L 19090:127.0.0.1:9090 root@PHONE_IP\n'
+    printf 'Then access http://localhost:18080/ from Windows.\n'
+  elif [[ "$linux_ip" != unavailable ]]; then
+    printf '\n[POSSIBLE NETWORK URL - host network must be reachable]\nhttp://%s/\n' "$linux_ip"
+  fi
+  printf '============================================================\n'
 }
-
-
-# =========================================================
-# Project information
-#
-# Used after:
-# Start / Restart / Rebuild
-# =========================================================
-
-show_project_info() {
-
-    show_container_status
-
-    show_connection_info
-
-}
-
-
-# =========================================================
-# Start project
-# =========================================================
-
-start_project() {
-
-    info "Starting Employee Management System..."
-
-    docker compose up -d
-
-    success "Employee Management System started."
-
-    show_project_info
-
-}
-
-
-# =========================================================
-# Stop project
-# =========================================================
-
+show_project_info() { show_container_status; show_connection_info; }
+start_project() { info 'Starting Employee Management System...'; compose up -d; success 'Project started'; show_project_info; }
 stop_project() {
-
-    info "Stopping Employee Management System..."
-
-    docker compose down
-
-    success "Employee Management System stopped."
-
+  info 'Stopping Employee Management System...'
+  compose down # Does not remove named volumes; never use -v here.
+  success 'Project stopped (persistent data preserved)'
 }
-
-
-# =========================================================
-# Restart project
-# =========================================================
-
 restart_project() {
-
-    info "Restarting Employee Management System..."
-
-    echo
-    echo "Stopping containers..."
-
-    docker compose down
-
-    echo
-    echo "Starting containers..."
-
-    docker compose up -d
-
-    success "Employee Management System restarted."
-
-    show_project_info
-
+  info 'Restarting Employee Management System...'
+  compose up -d --force-recreate
+  success 'Project restarted'
+  show_project_info
 }
-
-
-# =========================================================
-# Show status
-# =========================================================
-
-show_status() {
-
-    show_container_status
-
-}
-
-
-# =========================================================
-# Show all logs
-# =========================================================
-
 show_logs() {
-
-    info "Employee Management System logs"
-
-    echo
-    echo "按 Ctrl + C 停止 Log 並返回主選單。"
-    echo
-
-    trap '' INT
-
-    docker compose logs -f || true
-
-    trap - INT
-
+  local service="${1:-}"
+  info "${service:-All} logs"
+  printf '按 Ctrl+C 停止 Log 並返回主選單。\n\n'
+  # The logs command is a child: Ctrl+C stops following; menu continues.
+  if [[ -n "$service" ]]; then compose logs -f "$service" || true; else compose logs -f || true; fi
 }
-
-
-# =========================================================
-# Show Backend logs
-# =========================================================
-
-show_backend_logs() {
-
-    info "Backend logs"
-
-    echo
-    echo "按 Ctrl + C 停止 Log 並返回主選單。"
-    echo
-
-    trap '' INT
-
-    docker compose logs -f backend || true
-
-    trap - INT
-
-}
-
-
-# =========================================================
-# Show Frontend logs
-# =========================================================
-
-show_frontend_logs() {
-
-    info "Frontend logs"
-
-    echo
-    echo "按 Ctrl + C 停止 Log 並返回主選單。"
-    echo
-
-    trap '' INT
-
-    docker compose logs -f frontend || true
-
-    trap - INT
-
-}
-
-
-# =========================================================
-# Show MySQL logs
-# =========================================================
-
-show_mysql_logs() {
-
-    info "MySQL logs"
-
-    echo
-    echo "按 Ctrl + C 停止 Log 並返回主選單。"
-    echo
-
-    trap '' INT
-
-    docker compose logs -f mysql || true
-
-    trap - INT
-
-}
-
-
-# =========================================================
-# Rebuild project
-# =========================================================
-
-rebuild_project() {
-
-    info "Building and starting Employee Management System..."
-
-    docker compose up -d --build
-
-    success "Employee Management System rebuilt and started."
-
-    show_project_info
-
-}
-
-
-# =========================================================
-# Confirmation
-# =========================================================
-
+rebuild_project() { info 'Building and starting Employee Management System...'; compose up -d --build; success 'Project rebuilt and started'; show_project_info; }
 confirm_action() {
-
-    local message="$1"
-    local answer
-
-    echo
-
-    read -r -p "$message [y/N]: " answer
-
-    case "$answer" in
-
-        y|Y|yes|YES|Yes)
-            return 0
-            ;;
-
-        *)
-            return 1
-            ;;
-
-    esac
-
+  local answer=""
+  printf '\n'
+  read -r -p "$1 [y/N]: " answer || return 1
+  case "$answer" in y|Y|yes|YES|Yes) return 0;; *) return 1;; esac
 }
-
-
-# =========================================================
-# Main loop
-# =========================================================
 
 while true; do
-
-    show_header
-    show_menu
-
-    read -r -p "請輸入選項 [0-9]: " choice
-
-    case "$choice" in
-
-        1)
-
-            start_project
-
-            pause
-
-            ;;
-
-
-        2)
-
-            if confirm_action "確定要關閉 Employee Management System？"; then
-
-                stop_project
-
-            else
-
-                warning "已取消關閉操作。"
-
-            fi
-
-            pause
-
-            ;;
-
-
-        3)
-
-            if confirm_action "確定要重新啟動 Employee Management System？"; then
-
-                restart_project
-
-            else
-
-                warning "已取消重新啟動操作。"
-
-            fi
-
-            pause
-
-            ;;
-
-
-        4)
-
-            show_status
-
-            pause
-
-            ;;
-
-
-        5)
-
-            show_logs
-
-            ;;
-
-
-        6)
-
-            show_backend_logs
-
-            ;;
-
-
-        7)
-
-            show_frontend_logs
-
-            ;;
-
-
-        8)
-
-            show_mysql_logs
-
-            ;;
-
-
-        9)
-
-            if confirm_action "確定要重新 Build Employee Management System？"; then
-
-                rebuild_project
-
-            else
-
-                warning "已取消 Rebuild。"
-
-            fi
-
-            pause
-
-            ;;
-
-
-        0)
-
-            echo
-            echo "Bye."
-            echo
-
-            exit 0
-
-            ;;
-
-
-        *)
-
-            warning "無效選項：$choice"
-
-            echo
-            echo "請輸入 0 ~ 9。"
-
-            sleep 1
-
-            ;;
-
-    esac
-
+  show_header
+  show_menu
+  choice=""
+  read -r -p '請輸入選項 [0-9]: ' choice || { printf '\nBye.\n'; exit 0; }
+  case "$choice" in
+    1) start_project; pause ;;
+    2) if confirm_action '確定要關閉 Employee Management System？'; then stop_project; else warning '已取消關閉操作。'; fi; pause ;;
+    3) if confirm_action '確定要重新啟動 Employee Management System？'; then restart_project; else warning '已取消重新啟動操作。'; fi; pause ;;
+    4) show_container_status; pause ;;
+    5) show_logs ;;
+    6) show_logs backend ;;
+    7) show_logs frontend ;;
+    8) show_logs mysql ;;
+    9) if confirm_action '確定要重新 Build Employee Management System？'; then rebuild_project; else warning '已取消 Rebuild。'; fi; pause ;;
+    0) printf '\nBye.\n'; exit 0 ;;
+    *) warning "無效選項：$choice"; sleep 1 ;;
+  esac
 done
