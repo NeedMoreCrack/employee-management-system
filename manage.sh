@@ -63,6 +63,7 @@ show_menu() {
 8) 查看 MySQL Log
 
 9) Rebuild 專案
+10) 修復 Frontend（重建容器／重新掛載靜態檔案）
 0) 離開
 MENU
   printf '\n'
@@ -105,10 +106,58 @@ show_logs() {
   local service="${1:-}"
   info "${service:-All} logs"
   printf '按 Ctrl+C 停止 Log 並返回主選單。\n\n'
-  # The logs command is a child: Ctrl+C stops following; menu continues.
   if [[ -n "$service" ]]; then compose logs -f "$service" || true; else compose logs -f || true; fi
 }
 rebuild_project() { info 'Building and starting Employee Management System...'; compose up -d --build; success 'Project rebuilt and started'; show_project_info; }
+
+repair_frontend() {
+  info 'Repairing Frontend: recreate container and refresh bind mounts...'
+  # Recreate only the frontend; do not rebuild or restart the backend and MySQL.
+  if ! compose up -d --force-recreate --no-deps frontend; then
+    warning 'Frontend recreate failed. Check: docker compose logs --tail=100 frontend'
+    return 1
+  fi
+
+  local container_id
+  container_id="$(compose ps -q frontend)"
+  if [[ -z "$container_id" ]]; then
+    warning 'Frontend container was not found after recreation.'
+    return 1
+  fi
+
+  printf '\n[CHECK] Frontend files inside container:\n'
+  if ! docker exec "$container_id" ls -lah /usr/share/nginx/html/; then
+    warning 'Unable to read frontend directory inside container.'
+    return 1
+  fi
+
+  if ! docker exec "$container_id" test -f /usr/share/nginx/html/index.html; then
+    warning 'index.html is missing inside the container.'
+    warning 'Check /usr/local/app/nginx/html and the frontend bind mount in docker-compose.yml.'
+    return 1
+  fi
+  success 'index.html exists in frontend container.'
+
+  printf '\n[CHECK] HTTP response from Linux localhost:\n'
+  if command -v curl >/dev/null 2>&1; then
+    local http_code="" attempt
+    for attempt in 1 2 3 4 5; do
+      http_code="$(curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:80/ 2>/dev/null)" || http_code=""
+      [[ "$http_code" == 200 ]] && break
+      [[ "$attempt" -eq 5 ]] || sleep 1
+    done
+    printf 'HTTP status: %s\n' "${http_code:-unavailable}"
+    if [[ "$http_code" != 200 ]]; then
+      warning 'Frontend did not return HTTP 200. Check Nginx configuration and logs.'
+      return 1
+    fi
+    success 'Frontend HTTP 200 OK.'
+  else
+    warning 'curl is not installed. Skipping HTTP test; run curl -I http://127.0.0.1:80/ manually.'
+  fi
+  printf '\n[INFO] If using an SSH tunnel on Windows, visit http://localhost:18080/\n'
+}
+
 confirm_action() {
   local answer=""
   printf '\n'
@@ -120,7 +169,7 @@ while true; do
   show_header
   show_menu
   choice=""
-  read -r -p '請輸入選項 [0-9]: ' choice || { printf '\nBye.\n'; exit 0; }
+  read -r -p '請輸入選項 [0-10]: ' choice || { printf '\nBye.\n'; exit 0; }
   case "$choice" in
     1) start_project; pause ;;
     2) if confirm_action '確定要關閉 Employee Management System？'; then stop_project; else warning '已取消關閉操作。'; fi; pause ;;
@@ -131,6 +180,7 @@ while true; do
     7) show_logs frontend ;;
     8) show_logs mysql ;;
     9) if confirm_action '確定要重新 Build Employee Management System？'; then rebuild_project; else warning '已取消 Rebuild。'; fi; pause ;;
+    10) if confirm_action '確定要重新建立 Frontend Container（不動 Backend / MySQL）？'; then repair_frontend || warning 'Frontend 修復或驗證失敗，請查看上方訊息。'; else warning '已取消 Frontend 修復。'; fi; pause ;;
     0) printf '\nBye.\n'; exit 0 ;;
     *) warning "無效選項：$choice"; sleep 1 ;;
   esac
