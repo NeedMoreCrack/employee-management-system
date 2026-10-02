@@ -12,6 +12,7 @@ JAR_IMAGE="codeishard/myweb-file:latest"
 JAR_IMAGE_PATH="/files/myWeb.jar"
 JAR_IMAGE_PLATFORM="linux/amd64"  # Scratch file-carrier image; never executed.
 TEMP_CONTAINER=""
+TEMP_JAR=""
 
 info() { printf '\n[INFO] %s\n' "$*"; }
 ok() { printf '[OK] %s\n' "$*"; }
@@ -21,6 +22,9 @@ die() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
 cleanup() {
   if [[ -n "$TEMP_CONTAINER" ]]; then
     docker rm -f "$TEMP_CONTAINER" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$TEMP_JAR" ]]; then
+    rm -f -- "$TEMP_JAR"
   fi
 }
 trap cleanup EXIT
@@ -148,6 +152,7 @@ prepare_jar() {
     docker pull --platform "$JAR_IMAGE_PLATFORM" "$JAR_IMAGE"
 
     TEMP_CONTAINER="ems-jar-extract-$$"
+    TEMP_JAR="$destination.tmp.$$"
 
     docker create \
       --platform "$JAR_IMAGE_PLATFORM" \
@@ -157,11 +162,12 @@ prepare_jar() {
 
     docker cp \
       "$TEMP_CONTAINER:$JAR_IMAGE_PATH" \
-      "$destination.tmp.$$"
+      "$TEMP_JAR"
 
-    [[ -s "$destination.tmp.$$" ]] || die "Extracted JAR is empty"
+    [[ -s "$TEMP_JAR" ]] || die "Extracted JAR is empty"
 
-    mv -f "$destination.tmp.$$" "$destination"
+    mv -f "$TEMP_JAR" "$destination"
+    TEMP_JAR=""
 
     docker rm "$TEMP_CONTAINER" >/dev/null
     TEMP_CONTAINER=""
@@ -234,15 +240,69 @@ docker compose \
   --project-directory "$APP_DIR" \
   ps
 
-IP="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
-IP="${IP:-<Linux-IP>}"
+# =========================================================
+# Network information (Ubuntu / Alpine / BusyBox / Podroid)
+# Linux guest IP is NOT necessarily the Android Wi-Fi IP.
+# =========================================================
+get_linux_ip() {
+  local detected_ip=""
+
+  # 1. Prefer the source IP selected by the Linux routing table.
+  if command -v ip >/dev/null 2>&1; then
+    detected_ip="$(
+      ip -4 route get 1.1.1.1 2>/dev/null \
+        | awk '{ for (i=1; i<=NF; i++) if ($i=="src") { print $(i+1); exit } }' \
+        || true
+    )"
+  fi
+
+  # 2. GNU hostname may provide -I; BusyBox hostname may not.
+  if [[ -z "$detected_ip" ]]; then
+    detected_ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  fi
+
+  # 3. Use an IPv4 global address on a Linux interface as a fallback.
+  if [[ -z "$detected_ip" ]] && command -v ip >/dev/null 2>&1; then
+    detected_ip="$(
+      ip -4 -o addr show scope global 2>/dev/null \
+        | awk 'NR==1 {split($4, parts, "/"); print parts[1]}' \
+        || true
+    )"
+  fi
+
+  printf '%s\n' "${detected_ip:-Unavailable}"
+}
+
+LINUX_IP="$(get_linux_ip)"
 
 printf '\n[OK] Deployment command finished.\n'
 printf 'Source: %s\nDeployment: %s\nArchitecture: %s\n' \
   "$SOURCE_DIR" "$APP_DIR" "$ARCH"
 
-printf 'Frontend: http://%s\nBackend: http://%s:9090\nMySQL port: 3307\n' \
-  "$IP" "$IP"
+printf '\n[NETWORK]\n'
+printf 'Linux internal IP: %s\n' "$LINUX_IP"
+printf 'This address may not be reachable from other devices (e.g. Podroid NAT).\n'
 
-printf 'Logs: cd %s && docker compose logs -f\n' "$APP_DIR"
-printf 'Note: container startup does not guarantee application/database readiness.\n'
+printf '\n[LOCAL ACCESS INSIDE LINUX]\n'
+printf 'Frontend: http://127.0.0.1:80/\n'
+printf 'Backend : http://127.0.0.1:9090/\n'
+printf 'MySQL host port: 3307\n'
+
+case "$LINUX_IP" in
+  10.0.2.*)
+    printf '\n[NOTICE] A 10.0.2.x guest/virtual network address was detected.\n'
+    printf 'Do not assume it is your Android Wi-Fi IP.\n'
+    ;;
+esac
+
+printf '\n[REMOTE ACCESS - IF SSH FORWARDING IS CONFIGURED]\n'
+printf 'On Windows: run connect-podroid.bat\n'
+printf 'On macOS/Linux: run connect-podroid.sh\n'
+printf 'Enter the Android Wi-Fi IP and use the actual SSH port when prompted/configured.\n'
+printf 'After the SSH tunnel connects, open these URLs ON THE COMPUTER RUNNING IT:\n'
+printf 'Frontend: http://localhost:18080/\n'
+printf 'Backend : http://localhost:19090/\n'
+printf 'An SSH tunnel is not created by this installer.\n'
+
+printf '\nLogs: cd %s && docker compose logs -f\n' "$APP_DIR"
+printf 'Note: Container startup does not guarantee application/database readiness.\n'
