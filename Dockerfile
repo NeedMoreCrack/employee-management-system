@@ -1,28 +1,24 @@
-#使用Ubuntu作為基礎鏡像
-FROM ubuntu:latest
+# 使用 Eclipse Temurin JRE 17
+# 支援 AMD64 / ARM64，自動選擇對應架構
+FROM eclipse-temurin:17-jre
 
-#將JDK加到鏡像中
-COPY jdk17.tar.gz /usr/local/
-RUN tar -xzf /usr/local/jdk17.tar.gz -C /usr/local/ && rm /usr/local/jdk17.tar.gz
+# 設定 Java 環境變數
+# JAVA_HOME 與 PATH 已由基礎映像提供
 
-#設定環境變數
-ENV JAVA_HOME=/usr/local/jdk-17.0.12
-ENV PATH=$JAVA_HOME/bin:$PATH
+# 統一編碼
+ENV LANG=C.UTF-8
 
-#統一編碼
-ENV LANG=en_US.UTF-8
-ENV LANGUAGE=en_US:en
-ENV LC_ALL=en_US.UTF-8
-
-#新增應用資料夾
+# 新增應用資料夾
 RUN mkdir -p /app/images
+
+# 設定工作目錄
 WORKDIR /myWeb
 
-#複製應用JAR資料到容器
+# 複製應用 JAR 到容器
 COPY myWeb.jar myWeb.jar
 
-#顯示端口
+# 顯示端口
 EXPOSE 9090
 
-#運行命令
-ENTRYPOINT ["java","-Dfile.encoding=UTF-8","-jar","/myWeb/myWeb.jar"]
+# 運行 Spring Boot
+ENTRYPOINT ["java", "-Dfile.encoding=UTF-8", "-jar", "/myWeb/myWeb.jar"]

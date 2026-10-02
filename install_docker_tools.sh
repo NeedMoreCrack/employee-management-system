@@ -1,1057 +1,248 @@
-#!/bin/bash
 
+#!/usr/bin/env bash
 set -Eeuo pipefail
 
-# =========================================================
-# Employee Management System
-# Docker Environment Installation & Deployment Script
-#
-# GitHub:
-# https://github.com/NeedMoreCrack/employee-management-system
-#
-# Deployment directory:
-# /usr/local/app
-#
-# Usage:
-# sudo bash install_docker_tools.sh
-# =========================================================
+# Employee Management System - Ubuntu/Debian/Alpine/Fedora/Arch
+# Run: sudo bash install_docker_tools.sh (or bash ... when already root)
 
-
-# =========================================================
-# Basic configuration
-# =========================================================
-
-SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
+SOURCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 APP_DIR="/usr/local/app"
-
-JDK_FILE="jdk17.tar.gz"
 JAR_FILE="myWeb.jar"
-
-JDK_IMAGE="codeishard/jdk17-file:17"
 JAR_IMAGE="codeishard/myweb-file:latest"
-
-JDK_IMAGE_PATH="/files/jdk17.tar.gz"
 JAR_IMAGE_PATH="/files/myWeb.jar"
+JAR_IMAGE_PLATFORM="linux/amd64"  # Scratch file-carrier image; never executed.
+TEMP_CONTAINER=""
 
-NGINX_IMAGE="nginx:1.28.0"
-MYSQL_IMAGE="mysql:8"
+info() { printf '\n[INFO] %s\n' "$*"; }
+ok() { printf '[OK] %s\n' "$*"; }
+warn() { printf '[WARN] %s\n' "$*" >&2; }
+die() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
 
-
-# =========================================================
-# Output functions
-# =========================================================
-
-info() {
-    echo
-    echo "============================================================"
-    echo "[INFO] $1"
-    echo "============================================================"
+cleanup() {
+  if [[ -n "$TEMP_CONTAINER" ]]; then
+    docker rm -f "$TEMP_CONTAINER" >/dev/null 2>&1 || true
+  fi
 }
+trap cleanup EXIT
+trap 'printf "[ERROR] Failed at line %s: %s\n" "$LINENO" "$BASH_COMMAND" >&2' ERR
 
-success() {
-    echo "[OK] $1"
-}
+[[ $EUID -eq 0 ]] || die "Run as root: sudo bash install_docker_tools.sh"
+[[ -f "$SOURCE_DIR/Dockerfile" ]] || die "Missing $SOURCE_DIR/Dockerfile"
+[[ -f "$SOURCE_DIR/nginx/conf/nginx.conf" ]] || die "Missing nginx/conf/nginx.conf"
 
-warning() {
-    echo "[WARNING] $1"
-}
-
-error() {
-    echo "[ERROR] $1" >&2
-}
-
-
-# =========================================================
-# Error handling
-# =========================================================
-
-trap 'error "Deployment failed at line $LINENO."' ERR
-
-
-# =========================================================
-# Root check
-# =========================================================
-
-if [ "$EUID" -ne 0 ]; then
-
-    error "This script must be run as root."
-
-    echo
-    echo "Please run:"
-    echo
-    echo "  sudo bash install_docker_tools.sh"
-    echo
-
-    exit 1
-fi
-
-
-# =========================================================
-# Deployment information
-# =========================================================
-
-info "Deployment information"
-
-echo "Source directory:"
-echo "  $SOURCE_DIR"
-
-echo
-
-echo "Deployment directory:"
-echo "  $APP_DIR"
-
-
-# =========================================================
-# Check source project
-# =========================================================
-
-info "Checking source project..."
-
-
-# ---------------------------------------------------------
-# Dockerfile
-# ---------------------------------------------------------
-
-if [ ! -f "$SOURCE_DIR/Dockerfile" ]; then
-
-    error "Dockerfile not found:"
-    echo "  $SOURCE_DIR/Dockerfile"
-
-    exit 1
-fi
-
-
-# ---------------------------------------------------------
-# Docker Compose
-# ---------------------------------------------------------
-
-COMPOSE_FOUND=false
-
-for compose_file in \
-    "docker-compose.yml" \
-    "docker-compose.yaml" \
-    "compose.yml" \
-    "compose.yaml"
-do
-
-    if [ -f "$SOURCE_DIR/$compose_file" ]; then
-
-        COMPOSE_FOUND=true
-        SOURCE_COMPOSE_FILE="$compose_file"
-
-        break
-    fi
-
+SOURCE_COMPOSE=""
+for name in docker-compose.yml docker-compose.yaml compose.yml compose.yaml; do
+  if [[ -f "$SOURCE_DIR/$name" ]]; then
+    SOURCE_COMPOSE="$name"
+    break
+  fi
 done
+[[ -n "$SOURCE_COMPOSE" ]] || die "Missing Docker Compose configuration"
 
-
-if [ "$COMPOSE_FOUND" = false ]; then
-
-    error "Docker Compose configuration not found."
-
-    echo
-    echo "Source directory:"
-    echo "  $SOURCE_DIR"
-
-    exit 1
+if grep -Eq '(^|[[:space:]])(COPY|ADD)[[:space:]]+.*jdk17\.tar\.gz' "$SOURCE_DIR/Dockerfile"; then
+  die "Dockerfile still requires jdk17.tar.gz. Update it to FROM eclipse-temurin:17-jre first."
 fi
 
-
-# ---------------------------------------------------------
-# Nginx
-# ---------------------------------------------------------
-
-if [ ! -f "$SOURCE_DIR/nginx/conf/nginx.conf" ]; then
-
-    error "Nginx configuration not found:"
-
-    echo
-    echo "  $SOURCE_DIR/nginx/conf/nginx.conf"
-
-    exit 1
+if [[ -r /etc/os-release ]]; then
+  . /etc/os-release
 fi
+DISTRO="${PRETTY_NAME:-${ID:-unknown}}"
+ARCH="$(uname -m)"
 
+info "Source: $SOURCE_DIR | Destination: $APP_DIR"
+info "System: $DISTRO | Architecture: $ARCH"
 
-success "Source project structure is valid."
+# Only install missing capabilities. Package names vary across distributions.
+install_docker() {
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+      docker.io docker-compose-v2 docker-buildx-plugin \
+      || {
+        warn "Trying alternate Ubuntu/Debian package names"
+        DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          docker.io docker-compose-plugin docker-buildx-plugin
+      }
 
-echo
-echo "Docker Compose:"
-echo "  $SOURCE_COMPOSE_FILE"
+  elif command -v apk >/dev/null 2>&1; then
+    apk update
+    apk add docker docker-cli-compose docker-cli-buildx
 
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y docker docker-compose-plugin docker-buildx-plugin
 
-# =========================================================
-# Check required packages
-# =========================================================
+  elif command -v pacman >/dev/null 2>&1; then
+    pacman -Sy --needed --noconfirm docker docker-compose docker-buildx
 
-info "Checking required packages..."
+  else
+    die "Unsupported package manager. Install Docker, Compose v2 and Buildx manually."
+  fi
+}
 
-REQUIRED_PACKAGES=(
-    "docker.io"
-    "docker-compose-v2"
-    "docker-buildx"
-)
+if ! command -v docker >/dev/null 2>&1 \
+   || ! docker compose version >/dev/null 2>&1 \
+   || ! docker buildx version >/dev/null 2>&1; then
 
-MISSING_PACKAGES=()
-
-
-for package in "${REQUIRED_PACKAGES[@]}"; do
-
-    if dpkg -s "$package" >/dev/null 2>&1; then
-
-        success "$package is already installed."
-
-    else
-
-        warning "$package is not installed."
-
-        MISSING_PACKAGES+=("$package")
-
-    fi
-
-done
-
-
-# =========================================================
-# Install missing packages only
-# =========================================================
-
-if [ "${#MISSING_PACKAGES[@]}" -gt 0 ]; then
-
-    info "Installing missing packages..."
-
-    echo "Missing packages:"
-
-    for package in "${MISSING_PACKAGES[@]}"; do
-        echo "  - $package"
-    done
-
-    echo
-
-    apt update
-
-    apt install -y "${MISSING_PACKAGES[@]}"
-
-    success "Missing packages installed."
-
+  info "Installing missing Docker components"
+  install_docker
 else
-
-    success "All required packages are already installed."
-    echo "Skip apt update/install."
-
+  ok "Docker CLI / Compose / Buildx already available; skip package installation"
 fi
 
+command -v docker >/dev/null 2>&1 || die "Docker CLI not found"
+docker compose version || die "Docker Compose v2 unavailable"
+docker buildx version || die "Docker Buildx unavailable"
 
-# =========================================================
-# Start Docker service
-# =========================================================
+# Check Docker daemon.
+if ! docker info >/dev/null 2>&1; then
+  info "Starting Docker daemon"
 
-info "Checking Docker service..."
+  if command -v systemctl >/dev/null 2>&1 \
+     && [[ -d /run/systemd/system ]]; then
+    systemctl enable --now docker
 
+  elif command -v rc-service >/dev/null 2>&1; then
+    rc-update add docker default >/dev/null 2>&1 || true
+    rc-service docker start
 
-if docker info >/dev/null 2>&1; then
+  elif command -v service >/dev/null 2>&1; then
+    service docker start
 
-    success "Docker daemon is already running."
-
-else
-
-    warning "Docker daemon is not running."
-
-    echo "Trying to start Docker..."
-
-    if command -v systemctl >/dev/null 2>&1 &&
-       [ -d /run/systemd/system ]; then
-
-        systemctl enable docker >/dev/null 2>&1 || true
-        systemctl start docker
-
-    elif command -v service >/dev/null 2>&1; then
-
-        service docker start
-
-    else
-
-        error "Unable to start Docker automatically."
-
-        exit 1
-    fi
-
-
-    # -----------------------------------------------------
-    # Check again
-    # -----------------------------------------------------
-
-    if docker info >/dev/null 2>&1; then
-
-        success "Docker daemon started successfully."
-
-    else
-
-        error "Docker daemon failed to start."
-
-        exit 1
-    fi
-
+  else
+    die "Docker daemon unavailable; start it manually and rerun"
+  fi
 fi
 
-
-# =========================================================
-# Docker version
-# =========================================================
-
-info "Docker environment"
+docker info >/dev/null 2>&1 \
+  || die "Cannot communicate with Docker daemon"
 
 docker --version
-docker compose version
-docker buildx version
 
+# Prepare deployment directory.
+# Never wipe mysql/data or nginx/html on redeployment.
+mkdir -p \
+  "$APP_DIR/mysql/data" \
+  "$APP_DIR/mysql/conf" \
+  "$APP_DIR/mysql/init" \
+  "$APP_DIR/nginx/conf" \
+  "$APP_DIR/nginx/html"
 
-# =========================================================
-# Prepare deployment directory
-# =========================================================
+# Prepare JAR BEFORE touching running services.
+prepare_jar() {
+  local destination="$APP_DIR/$JAR_FILE"
 
-info "Preparing deployment directory..."
+  if [[ -s "$SOURCE_DIR/$JAR_FILE" \
+        && "$SOURCE_DIR/$JAR_FILE" != "$destination" ]]; then
 
-mkdir -p "$APP_DIR"
-mkdir -p "$APP_DIR/mysql"
-mkdir -p "$APP_DIR/mysql/data"
+    info "Copying JAR from source directory"
+    cp -f "$SOURCE_DIR/$JAR_FILE" "$destination"
 
-success "Deployment directory ready."
+  elif [[ -s "$destination" ]]; then
+    ok "Existing JAR found: $destination (skip Docker Hub download)"
 
+  else
+    info "Downloading $JAR_FILE from $JAR_IMAGE ($JAR_IMAGE_PLATFORM)"
 
-# =========================================================
-# Stop old Compose project if possible
-# =========================================================
+    # The carrier image can be AMD64 even when the target device is ARM64:
+    # docker create/cp never starts or executes its content.
+    docker pull --platform "$JAR_IMAGE_PLATFORM" "$JAR_IMAGE"
 
-if [ -f "$APP_DIR/docker-compose.yml" ] ||
-   [ -f "$APP_DIR/docker-compose.yaml" ] ||
-   [ -f "$APP_DIR/compose.yml" ] ||
-   [ -f "$APP_DIR/compose.yaml" ]; then
-
-    info "Stopping existing Docker Compose project..."
-
-    cd "$APP_DIR"
-
-    docker compose down || warning "docker compose down returned an error."
-
-fi
-
-
-# =========================================================
-# Remove old containers
-#
-# Prevent:
-# Conflict. The container name "/mysql" is already in use
-# =========================================================
-
-info "Checking old containers..."
-
-OLD_CONTAINERS=(
-    "mysql"
-    "myweb-backend"
-    "myweb-frontend"
-)
-
-
-for container in "${OLD_CONTAINERS[@]}"; do
-
-    if docker container inspect "$container" >/dev/null 2>&1; then
-
-        warning "Old container found: $container"
-
-        echo "Removing:"
-        echo "  $container"
-
-        docker rm -f "$container"
-
-        success "Removed old container: $container"
-
-    else
-
-        success "Old container not found: $container"
-
-    fi
-
-done
-
-
-# =========================================================
-# Remove old network if unused
-# =========================================================
-
-info "Checking old Docker network..."
-
-NETWORK_NAME="myWeb"
-
-
-if docker network inspect "$NETWORK_NAME" >/dev/null 2>&1; then
-
-    warning "Docker network already exists: $NETWORK_NAME"
-
-    # Check if any containers are still using the network
-    NETWORK_CONTAINERS="$(
-        docker network inspect "$NETWORK_NAME" \
-            --format '{{range $id, $container := .Containers}}{{$id}} {{end}}' \
-            2>/dev/null || true
-    )"
-
-
-    if [ -z "$NETWORK_CONTAINERS" ]; then
-
-        echo "Network is not being used."
-        echo "Removing old network..."
-
-        docker network rm "$NETWORK_NAME" >/dev/null
-
-        success "Old network removed: $NETWORK_NAME"
-
-    else
-
-        warning "Network is still being used by other containers."
-        echo "Skip network removal."
-
-    fi
-
-else
-
-    success "Old network not found."
-
-fi
-
-
-# =========================================================
-# Deploy project files
-# =========================================================
-
-info "Copying project files to $APP_DIR..."
-
-
-# ---------------------------------------------------------
-# Dockerfile
-# ---------------------------------------------------------
-
-cp -f \
-    "$SOURCE_DIR/Dockerfile" \
-    "$APP_DIR/Dockerfile"
-
-
-# ---------------------------------------------------------
-# Docker Compose
-# ---------------------------------------------------------
-
-cp -f \
-    "$SOURCE_DIR/$SOURCE_COMPOSE_FILE" \
-    "$APP_DIR/$SOURCE_COMPOSE_FILE"
-
-
-# ---------------------------------------------------------
-# Nginx
-# ---------------------------------------------------------
-
-rm -rf "$APP_DIR/nginx"
-
-cp -a \
-    "$SOURCE_DIR/nginx" \
-    "$APP_DIR/nginx"
-
-
-# ---------------------------------------------------------
-# MySQL
-#
-# mysql/data is intentionally preserved.
-# ---------------------------------------------------------
-
-mkdir -p "$APP_DIR/mysql"
-
-
-if [ -d "$SOURCE_DIR/mysql/conf" ]; then
-
-    rm -rf "$APP_DIR/mysql/conf"
-
-    cp -a \
-        "$SOURCE_DIR/mysql/conf" \
-        "$APP_DIR/mysql/conf"
-
-fi
-
-
-if [ -d "$SOURCE_DIR/mysql/init" ]; then
-
-    rm -rf "$APP_DIR/mysql/init"
-
-    cp -a \
-        "$SOURCE_DIR/mysql/init" \
-        "$APP_DIR/mysql/init"
-
-fi
-
-
-mkdir -p "$APP_DIR/mysql/data"
-
-
-# ---------------------------------------------------------
-# Copy other project files
-#
-# Excluded:
-#
-# .git
-# nginx
-# mysql
-# jdk17.tar.gz
-# myWeb.jar
-#
-# Large files are handled separately.
-# ---------------------------------------------------------
-
-for item in \
-    "$SOURCE_DIR"/* \
-    "$SOURCE_DIR"/.[!.]* \
-    "$SOURCE_DIR"/..?*
-do
-
-    [ -e "$item" ] || continue
-
-    name="$(basename "$item")"
-
-
-    case "$name" in
-
-        ".git" | \
-        "nginx" | \
-        "mysql" | \
-        "$JDK_FILE" | \
-        "$JAR_FILE" | \
-        "Dockerfile" | \
-        "docker-compose.yml" | \
-        "docker-compose.yaml" | \
-        "compose.yml" | \
-        "compose.yaml")
-
-            continue
-            ;;
-
-    esac
-
-
-    if [ -d "$item" ]; then
-
-        rm -rf "$APP_DIR/$name"
-
-        cp -a \
-            "$item" \
-            "$APP_DIR/$name"
-
-    elif [ -f "$item" ]; then
-
-        cp -f \
-            "$item" \
-            "$APP_DIR/$name"
-
-    fi
-
-done
-
-
-success "Project files deployed to $APP_DIR."
-
-
-# =========================================================
-# Check deployed files
-# =========================================================
-
-info "Checking deployed project..."
-
-
-if [ ! -f "$APP_DIR/Dockerfile" ]; then
-
-    error "Dockerfile deployment failed."
-
-    exit 1
-fi
-
-
-if [ ! -f "$APP_DIR/$SOURCE_COMPOSE_FILE" ]; then
-
-    error "Docker Compose deployment failed."
-
-    exit 1
-fi
-
-
-if [ ! -f "$APP_DIR/nginx/conf/nginx.conf" ]; then
-
-    error "Nginx configuration deployment failed."
-
-    echo
-    echo "Expected:"
-    echo "  $APP_DIR/nginx/conf/nginx.conf"
-
-    exit 1
-fi
-
-
-success "Deployed project structure is valid."
-
-
-# =========================================================
-# Prepare large files
-#
-# Priority:
-#
-# 1. Deployment directory already contains file
-# 2. Source directory contains file
-# 3. Extract file from Docker Hub image
-# =========================================================
-
-prepare_large_file() {
-
-    local filename="$1"
-    local image="$2"
-    local image_path="$3"
-
-    local app_file="$APP_DIR/$filename"
-    local source_file="$SOURCE_DIR/$filename"
-
-    local safe_name
-    safe_name="${filename//[^a-zA-Z0-9]/-}"
-
-    local temp_container="ems-file-${safe_name}"
-
-
-    info "Checking large file: $filename"
-
-
-    # -----------------------------------------------------
-    # Deployment directory
-    # -----------------------------------------------------
-
-    if [ -s "$app_file" ]; then
-
-        success "$filename already exists."
-
-        echo
-        echo "File:"
-        echo "  $app_file"
-
-        echo
-        echo "Size:"
-        du -h "$app_file"
-
-        echo
-        echo "Skip Docker Hub download."
-
-        return 0
-    fi
-
-
-    # -----------------------------------------------------
-    # Remove empty / broken zero-byte file
-    # -----------------------------------------------------
-
-    if [ -f "$app_file" ]; then
-
-        warning "Empty file detected:"
-        echo "  $app_file"
-
-        rm -f "$app_file"
-    fi
-
-
-    # -----------------------------------------------------
-    # Source directory
-    # -----------------------------------------------------
-
-    if [ -s "$source_file" ]; then
-
-        success "$filename found in source directory."
-
-        echo
-        echo "Source:"
-        echo "  $source_file"
-
-        echo
-        echo "Copying to:"
-        echo "  $app_file"
-
-        cp -f \
-            "$source_file" \
-            "$app_file"
-
-
-        if [ -s "$app_file" ]; then
-
-            success "$filename copied successfully."
-
-            echo
-            echo "Size:"
-            du -h "$app_file"
-
-            return 0
-
-        else
-
-            error "Failed to copy $filename."
-
-            exit 1
-        fi
-    fi
-
-
-    # -----------------------------------------------------
-    # Docker Hub image
-    # -----------------------------------------------------
-
-    warning "$filename was not found locally."
-
-    echo
-    echo "Docker image:"
-    echo "  $image"
-
-    echo
-    echo "Image file:"
-    echo "  $image_path"
-
-
-    # -----------------------------------------------------
-    # Pull image only when not available locally
-    # -----------------------------------------------------
-
-    if docker image inspect "$image" >/dev/null 2>&1; then
-
-        success "Docker image already exists locally:"
-        echo "  $image"
-
-        echo
-        echo "Skip docker pull."
-
-    else
-
-        echo
-        echo "Pulling Docker image..."
-
-        docker pull "$image"
-
-        if ! docker image inspect "$image" >/dev/null 2>&1; then
-
-            error "Docker image download failed:"
-            echo "  $image"
-
-            exit 1
-        fi
-
-        success "Docker image downloaded successfully:"
-        echo "  $image"
-    fi
-
-
-    # -----------------------------------------------------
-    # Remove possible old temporary container
-    # -----------------------------------------------------
-
-    if docker container inspect "$temp_container" >/dev/null 2>&1; then
-
-        warning "Old temporary container found:"
-        echo "  $temp_container"
-
-        docker rm -f "$temp_container" >/dev/null
-    fi
-
-
-    # -----------------------------------------------------
-    # Create temporary container
-    #
-    # The image uses FROM scratch and has no CMD,
-    # therefore a dummy command must be specified.
-    # The container is never started.
-    # -----------------------------------------------------
-
-    echo
-    echo "Creating temporary container..."
+    TEMP_CONTAINER="ems-jar-extract-$$"
 
     docker create \
-        --name "$temp_container" \
-        "$image" \
-        /bin/true \
-        >/dev/null
+      --platform "$JAR_IMAGE_PLATFORM" \
+      --name "$TEMP_CONTAINER" \
+      "$JAR_IMAGE" \
+      /bin/true >/dev/null
 
+    docker cp \
+      "$TEMP_CONTAINER:$JAR_IMAGE_PATH" \
+      "$destination.tmp.$$"
 
-    # -----------------------------------------------------
-    # Extract file
-    # -----------------------------------------------------
+    [[ -s "$destination.tmp.$$" ]] || die "Extracted JAR is empty"
 
-    echo
-    echo "Extracting $filename from Docker image..."
+    mv -f "$destination.tmp.$$" "$destination"
 
-    if docker cp \
-        "$temp_container:$image_path" \
-        "$app_file"
-    then
+    docker rm "$TEMP_CONTAINER" >/dev/null
+    TEMP_CONTAINER=""
+  fi
 
-        docker rm "$temp_container" >/dev/null
-
-    else
-
-        error "Failed to extract $filename from Docker image."
-
-        docker rm -f "$temp_container" >/dev/null 2>&1 || true
-        rm -f "$app_file"
-
-        exit 1
-    fi
-
-
-    # -----------------------------------------------------
-    # Validate extracted file
-    # -----------------------------------------------------
-
-    if [ -s "$app_file" ]; then
-
-        success "$filename extracted successfully."
-
-        echo
-        echo "File:"
-        echo "  $app_file"
-
-        echo
-        echo "Size:"
-        du -h "$app_file"
-
-    else
-
-        error "Extracted file is missing or empty:"
-        echo "  $app_file"
-
-        rm -f "$app_file"
-
-        exit 1
-    fi
+  [[ -s "$destination" ]] || die "Missing/empty $destination"
+  du -h "$destination"
 }
 
+prepare_jar
 
-# =========================================================
-# Prepare JDK / Backend JAR
-# =========================================================
+# Copy files only when source and deployment directories differ.
+if [[ "$SOURCE_DIR" != "$APP_DIR" ]]; then
+  info "Copying project files (preserving persistent data)"
 
-prepare_large_file \
-    "$JDK_FILE" \
-    "$JDK_IMAGE" \
-    "$JDK_IMAGE_PATH"
+  cp -f "$SOURCE_DIR/Dockerfile" "$APP_DIR/Dockerfile"
+  cp -f "$SOURCE_DIR/$SOURCE_COMPOSE" "$APP_DIR/docker-compose.yml"
 
+  [[ ! -f "$SOURCE_DIR/manage.sh" ]] \
+    || cp -f "$SOURCE_DIR/manage.sh" "$APP_DIR/manage.sh"
 
-prepare_large_file \
-    "$JAR_FILE" \
-    "$JAR_IMAGE" \
-    "$JAR_IMAGE_PATH"
+  [[ ! -f "$SOURCE_DIR/README.md" ]] \
+    || cp -f "$SOURCE_DIR/README.md" "$APP_DIR/README.md"
 
+  [[ ! -f "$SOURCE_DIR/.dockerignore" ]] \
+    || cp -f "$SOURCE_DIR/.dockerignore" "$APP_DIR/.dockerignore"
 
-# =========================================================
-# Docker image cache
-# =========================================================
+  # Copy configs/assets without deleting existing deployment data.
+  [[ ! -d "$SOURCE_DIR/mysql/conf" ]] \
+    || cp -a "$SOURCE_DIR/mysql/conf/." "$APP_DIR/mysql/conf/"
 
-check_or_pull_image() {
+  [[ ! -d "$SOURCE_DIR/mysql/init" ]] \
+    || cp -a "$SOURCE_DIR/mysql/init/." "$APP_DIR/mysql/init/"
 
-    local image="$1"
+  [[ ! -d "$SOURCE_DIR/nginx/conf" ]] \
+    || cp -a "$SOURCE_DIR/nginx/conf/." "$APP_DIR/nginx/conf/"
 
-    info "Checking Docker image: $image"
+  [[ ! -d "$SOURCE_DIR/nginx/html" ]] \
+    || cp -a "$SOURCE_DIR/nginx/html/." "$APP_DIR/nginx/html/"
+else
+  ok "Running from deployment directory; skipping self-copy"
+fi
 
+COMPOSE_PATH="$APP_DIR/docker-compose.yml"
 
-    if docker image inspect "$image" >/dev/null 2>&1; then
+if [[ "$SOURCE_DIR" == "$APP_DIR" ]]; then
+  COMPOSE_PATH="$APP_DIR/$SOURCE_COMPOSE"
+fi
 
-        success "Docker image already exists:"
-        echo "  $image"
+[[ -f "$COMPOSE_PATH" ]] || die "Missing deployed Compose file"
 
-        echo
-        echo "Skip docker pull."
+info "Validating Compose"
+docker compose \
+  -f "$COMPOSE_PATH" \
+  --project-directory "$APP_DIR" \
+  config -q
 
-        return 0
+info "Building and starting services"
 
-    fi
-
-
-    warning "Docker image not found:"
-    echo "  $image"
-
-    echo
-    echo "Pulling Docker image..."
-
-
-    docker pull "$image"
-
-
-    if docker image inspect "$image" >/dev/null 2>&1; then
-
-        success "Docker image downloaded successfully:"
-        echo "  $image"
-
-    else
-
-        error "Docker image download failed:"
-        echo "  $image"
-
-        exit 1
-    fi
-}
-
-
-# =========================================================
-# Check required Docker images
-# =========================================================
-
-check_or_pull_image "$NGINX_IMAGE"
-
-check_or_pull_image "$MYSQL_IMAGE"
-
-
-# =========================================================
-# Validate Docker Compose
-# =========================================================
-
-info "Validating Docker Compose configuration..."
-
-cd "$APP_DIR"
-
-docker compose config >/dev/null
-
-success "Docker Compose configuration is valid."
-
-
-# =========================================================
-# Build and start
-# =========================================================
-
-info "Building and starting Employee Management System..."
-
-docker compose up -d --build
-
-success "Employee Management System started."
-
-
-# =========================================================
-# Container status
-# =========================================================
+# 'up' recreates changed containers; no unconditional down / volume deletion.
+docker compose \
+  -f "$COMPOSE_PATH" \
+  --project-directory "$APP_DIR" \
+  up -d --build
 
 info "Container status"
 
-docker compose ps
+docker compose \
+  -f "$COMPOSE_PATH" \
+  --project-directory "$APP_DIR" \
+  ps
 
+IP="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+IP="${IP:-<Linux-IP>}"
 
-# =========================================================
-# Linux IP
-# =========================================================
+printf '\n[OK] Deployment command finished.\n'
+printf 'Source: %s\nDeployment: %s\nArchitecture: %s\n' \
+  "$SOURCE_DIR" "$APP_DIR" "$ARCH"
 
-LINUX_IP="$(
-    hostname -I 2>/dev/null |
-    awk '{print $1}'
-)"
+printf 'Frontend: http://%s\nBackend: http://%s:9090\nMySQL port: 3307\n' \
+  "$IP" "$IP"
 
-
-if [ -z "$LINUX_IP" ]; then
-    LINUX_IP="<Linux-IP>"
-fi
-
-
-# =========================================================
-# Deployment completed
-# =========================================================
-
-echo
-echo "============================================================"
-echo " Employee Management System"
-echo " Deployment completed successfully"
-echo "============================================================"
-
-echo
-
-echo "Source directory:"
-echo "  $SOURCE_DIR"
-
-echo
-
-echo "Deployment directory:"
-echo "  $APP_DIR"
-
-echo
-
-echo "Linux IP:"
-echo "  $LINUX_IP"
-
-echo
-
-echo "Browser:"
-echo "  http://$LINUX_IP"
-
-
-echo
-echo "------------------------------------------------------------"
-echo "MySQL"
-echo "------------------------------------------------------------"
-
-echo
-
-echo "Host:"
-echo "  $LINUX_IP"
-
-echo
-
-echo "Port:"
-echo "  3307"
-
-echo
-
-echo "User:"
-echo "  root"
-
-echo
-
-echo "Password:"
-echo "  321321321"
-
-echo
-
-echo "Database:"
-echo "  restful"
-
-echo
-
-echo "MySQL CLI:"
-echo "  mysql -h $LINUX_IP -P3307 -u root -p"
-
-
-echo
-echo "------------------------------------------------------------"
-echo "Docker Compose"
-echo "------------------------------------------------------------"
-
-echo
-
-echo "Deployment directory:"
-echo "  cd $APP_DIR"
-
-echo
-
-echo "Start:"
-echo "  sudo docker compose up -d"
-
-echo
-
-echo "Stop:"
-echo "  sudo docker compose down"
-
-echo
-
-echo "Status:"
-echo "  sudo docker compose ps"
-
-echo
-
-echo "Logs:"
-echo "  sudo docker compose logs -f"
-
-echo
-
-echo "Rebuild:"
-echo "  sudo docker compose up -d --build"
-
-echo
-
-echo "============================================================"
+printf 'Logs: cd %s && docker compose logs -f\n' "$APP_DIR"
+printf 'Note: container startup does not guarantee application/database readiness.\n'
