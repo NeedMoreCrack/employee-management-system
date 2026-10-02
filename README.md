@@ -1,4 +1,5 @@
 
+
 # Employee Management System
 
 使用 Docker Compose 部署 Employee Management System，包含 Spring Boot Backend、Frontend（由 Nginx 提供靜態檔案）、MySQL 與 Nginx。
@@ -365,3 +366,64 @@ sudo bash install_docker_tools.sh
 - `myWeb.jar` 繼續使用 Docker Hub 檔案載體；提取時明確指定 `linux/amd64`，不執行載體容器。
 - `install_docker_tools.sh`、`manage.sh` 改善 Linux IP 偵測，區分 Podroid 內部 IP 與 Android Wi-Fi IP；管理選單不再列印 MySQL 密碼。
 - WSL Ubuntu AMD64 與 Podroid Alpine ARM64 均完成建置及三服務啟動測試；Podroid 的本機 HTTP 及 Windows SSH Tunnel 實測成功。
+
+## Podroid SSH Tunnel（Windows / macOS / Linux）
+
+Podroid Linux 可能使用獨立的虛擬網路。即使 Docker Compose 顯示 `0.0.0.0:80->80/tcp`，Android 手機的 Wi-Fi IP 也不一定能直接連入前端。若手機已將 SSH 對外轉發，可使用本專案的 SSH Tunnel 腳本，從**執行腳本的電腦**存取 Podroid 內的 Nginx 與 Spring Boot，不必額外開放 Android 的 80／9090 Port。
+
+### 使用前準備
+
+1. 先在 Podroid 完成專案部署，並確認 Linux 內執行 `curl -I http://127.0.0.1:80/` 有 HTTP 回應；後端可用 `curl -I http://127.0.0.1:9090/` 檢查（根路徑回傳 `401` 可能是正常的驗證結果）。
+2. 啟用 Podroid SSH，確認 Android 對外 SSH Port 可連線。以下腳本預設 SSH 帳號 `root`、Port `9922`；新環境若不同，請依實際設定調整。
+3. 在 Android 的 Wi-Fi 設定查看**手機 Wi-Fi IPv4**（例如 `192.168.0.229`）。不要輸入 Podroid 虛擬網卡的 `10.0.2.15`。使用端需要有 OpenSSH Client（`ssh`）。
+
+### 腳本與執行方式
+
+建議把兩支檔案放在 Repository 的 `scripts/` 目錄：
+
+```text
+scripts/
+├── connect-podroid.bat    # Windows（可雙擊）
+└── connect-podroid.sh     # macOS / Linux
+```
+
+| 平台 | 執行方式 |
+| --- | --- |
+| Windows | 雙擊 `connect-podroid.bat`，或在 CMD／PowerShell 執行 ` .\scripts\connect-podroid.bat` |
+| macOS | `bash ./scripts/connect-podroid.sh` |
+| Linux | `bash ./scripts/connect-podroid.sh` |
+
+> 上述指令假設目前位置是 Repository 根目錄；若檔案放在其他位置，請調整路徑。Windows 的 `.bat` 版本不必執行 `.ps1` 檔，因此不受 PowerShell 腳本數位簽章執行原則限制；它會使用 PowerShell 命令來驗證輸入的 IPv4。
+
+執行後依提示輸入 Android 手機的 Wi-Fi IP，接著依 SSH 提示輸入密碼或使用既有 SSH Key。**SSH Tunnel 視窗要保持開啟**；SSH 的 `-N` 模式只負責轉發，不會進入遠端互動 Shell。
+
+### 連線後的網址
+
+| 服務 | 在執行 Tunnel 的電腦上開啟 |
+| --- | --- |
+| Frontend（Podroid Port 80） | `http://localhost:18080/` |
+| Backend（Podroid Port 9090） | `http://localhost:19090/` |
+
+轉發路徑如下：
+
+```text
+本機 localhost:18080 -> SSH（Android Wi-Fi IP:9922）-> Podroid 127.0.0.1:80
+本機 localhost:19090 -> SSH（Android Wi-Fi IP:9922）-> Podroid 127.0.0.1:9090
+```
+
+兩支腳本預設只監聽執行端的本機 Loopback，不會因此將網頁開放給整個區網。按 `Ctrl+C` 中止連線。請使用 `http://`，不要將 SSH Port `9922` 當成網頁 Port，也不要假設已配置 HTTPS。
+
+### 自訂設定與排查
+
+- **Windows `.bat`**：可直接編輯檔案開頭的 `SSH_USER`、`SSH_PORT`、`FRONTEND_LOCAL_PORT`、`BACKEND_LOCAL_PORT`，預設依序為 `root`、`9922`、`18080`、`19090`。
+- **macOS／Linux `.sh`**：可使用環境變數覆蓋預設值，例如：
+
+  ```bash
+  PODROID_USER=root PODROID_SSH_PORT=2222 FRONTEND_LOCAL_PORT=18081 BACKEND_LOCAL_PORT=19091 bash ./scripts/connect-podroid.sh
+  ```
+
+- 如果提示本機 18080／19090 已被占用，請先關閉舊 Tunnel 或修改本機 Port。
+- 如果 SSH 無法連線，先確認手機 Wi-Fi IP、Podroid SSH 是否啟動，以及 Android 對外 SSH Port 是否正確。
+- 如果前端畫面能開啟，但登入／資料查詢失敗，請確認前端 API Base URL 是否仍指向其他 IP／Port；必要時檢查 API URL 與 CORS。**前端 HTTP 200 不代表全部 API 已通過測試。**
+
+這兩支腳本只建立 SSH 轉發，**不負責啟動 Podroid、SSH Server 或 Docker Compose**。
