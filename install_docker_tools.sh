@@ -56,31 +56,123 @@ ARCH="$(uname -m)"
 info "Source: $SOURCE_DIR | Destination: $APP_DIR"
 info "System: $DISTRO | Architecture: $ARCH"
 
-# Only install missing capabilities. Package names vary across distributions.
+# =========================================================
+# Install Docker / Docker Compose V2 / Docker Buildx
+# Ubuntu / Debian / Alpine / Fedora / Arch
+# =========================================================
+
 install_docker() {
+
   if command -v apt-get >/dev/null 2>&1; then
+
+    info "APT-based Linux detected: ${ID:-unknown}"
+
     apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get install -y \
-      docker.io docker-compose-v2 docker-buildx-plugin \
-      || {
-        warn "Trying alternate Ubuntu/Debian package names"
-        DEBIAN_FRONTEND=noninteractive apt-get install -y \
-          docker.io docker-compose-plugin docker-buildx-plugin
-      }
+
+    # Check if an APT package has an installable candidate.
+    apt_package_available() {
+      local candidate
+
+      candidate="$(
+        apt-cache policy "$1" 2>/dev/null |
+          awk '/Candidate:/ {print $2; exit}'
+      )"
+
+      [[ -n "$candidate" && "$candidate" != "(none)" ]]
+    }
+
+    # Ubuntu packages are normally provided through Universe.
+    if [[ "${ID:-}" == "ubuntu" ]]; then
+
+      if ! apt_package_available docker-compose-v2 \
+        || ! apt_package_available docker-buildx; then
+
+        info "Checking Ubuntu Universe repository"
+
+        apt-get install -y software-properties-common
+        add-apt-repository -y universe
+        apt-get update
+      fi
+    fi
+
+    # Install the distribution's Docker Engine.
+    if ! command -v docker >/dev/null 2>&1; then
+      apt_package_available docker.io \
+        || die "docker.io is unavailable in the configured APT repositories"
+
+      apt-get install -y docker.io
+    fi
+
+    # Compose V2
+    if ! docker compose version >/dev/null 2>&1; then
+
+      if apt_package_available docker-compose-v2; then
+        apt-get install -y docker-compose-v2
+
+      elif apt_package_available docker-compose-plugin; then
+        apt-get install -y docker-compose-plugin
+
+      else
+        die "Docker Compose V2 package not found"
+      fi
+    fi
+
+    # Buildx
+    if ! docker buildx version >/dev/null 2>&1; then
+
+      if apt_package_available docker-buildx; then
+        apt-get install -y docker-buildx
+
+      elif apt_package_available docker-buildx-plugin; then
+        apt-get install -y docker-buildx-plugin
+
+      else
+        die "Docker Buildx package not found"
+      fi
+    fi
 
   elif command -v apk >/dev/null 2>&1; then
+
+    info "Alpine Linux detected"
+
     apk update
     apk add docker docker-cli-compose docker-cli-buildx
 
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y docker docker-compose-plugin docker-buildx-plugin
+
+    info "DNF-based Linux detected"
+
+    dnf install -y \
+      docker \
+      docker-compose-plugin \
+      docker-buildx-plugin
 
   elif command -v pacman >/dev/null 2>&1; then
-    pacman -Sy --needed --noconfirm docker docker-compose docker-buildx
+
+    info "Arch-based Linux detected"
+
+    pacman -Sy --needed --noconfirm \
+      docker \
+      docker-compose \
+      docker-buildx
 
   else
-    die "Unsupported package manager. Install Docker, Compose v2 and Buildx manually."
+
+    die "Unsupported package manager. Please install Docker manually."
+
   fi
+
+  # Final verification
+  command -v docker >/dev/null 2>&1 \
+    || die "Docker CLI installation failed"
+
+  docker compose version >/dev/null 2>&1 \
+    || die "Docker Compose V2 installation failed"
+
+  docker buildx version >/dev/null 2>&1 \
+    || die "Docker Buildx installation failed"
+
+  ok "Docker / Compose V2 / Buildx installation completed"
 }
 
 if ! command -v docker >/dev/null 2>&1 \
