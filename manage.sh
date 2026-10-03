@@ -1,8 +1,8 @@
-
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Employee Management System - Docker Compose management (WSL / Alpine / Podroid)
+# Employee Management System - Docker Compose management
+# Ubuntu / Debian / Alpine / Fedora / Arch / WSL / Multipass / Podroid
 # Usage: sudo bash manage.sh (or bash manage.sh when already root)
 APP_DIR="/usr/local/app"
 MYSQL_PORT="3307"
@@ -26,17 +26,21 @@ docker info >/dev/null 2>&1 || die "Docker daemon is not running"
 docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is unavailable"
 cd "$APP_DIR"
 
-# Explicit -f and --project-directory keep all actions on the deployed project.
+# Always operate on the deployed project, not the caller's current directory.
 compose() { docker compose -f "$COMPOSE_FILE" --project-directory "$APP_DIR" "$@"; }
 
 get_linux_ip() {
   local found=""
+  # The route's source address normally identifies the host/VM interface,
+  # avoiding docker0 and Docker Compose bridge addresses.
   if command -v ip >/dev/null 2>&1; then
     found="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}' || true)"
   fi
-  if [[ -z "$found" ]]; then found="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"; fi
+  if [[ -z "$found" ]]; then
+    found="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  fi
   if [[ -z "$found" ]] && command -v ip >/dev/null 2>&1; then
-    found="$(ip -4 -o addr show scope global 2>/dev/null | awk 'NR==1 {split($4,a,"/"); print a[1]}' || true)"
+    found="$(ip -4 -o addr show scope global 2>/dev/null | awk '$2 !~ /^(docker[0-9]*|br-|veth)/ {split($4,a,"/"); print a[1]; exit}' || true)"
   fi
   printf '%s\n' "${found:-unavailable}"
 }
@@ -68,27 +72,48 @@ show_menu() {
 MENU
   printf '\n'
 }
+
 show_container_status() { info 'Container status'; compose ps; }
+
 show_connection_info() {
   local linux_ip
   linux_ip="$(get_linux_ip)"
+
   printf '\n============================================================\n Employee Management System - Connection Information\n============================================================\n'
-  printf 'Linux internal IP: %s\n' "$linux_ip"
-  printf '\n[LOCAL ACCESS IN LINUX]\nFrontend: http://127.0.0.1:80/\nBackend:  http://127.0.0.1:9090/\n'
-  printf '\n[MYSQL]\nHost (in Linux): 127.0.0.1\nPort: %s\nUser: %s\nDatabase: %s\n' "$MYSQL_PORT" "$MYSQL_USER" "$MYSQL_DATABASE"
+  printf 'Linux IP: %s\n' "$linux_ip"
+  printf '\n[LOCAL ACCESS INSIDE LINUX]\n'
+  printf 'Frontend: http://127.0.0.1:80/\n'
+  printf 'Backend : http://127.0.0.1:9090/\n'
+
+  printf '\n[MYSQL]\n'
+  printf 'Host (in Linux): 127.0.0.1\nPort: %s\nUser: %s\nDatabase: %s\n' "$MYSQL_PORT" "$MYSQL_USER" "$MYSQL_DATABASE"
   printf 'Password: (not displayed; see your local Compose/.env configuration)\n'
   printf 'CLI (if mysql client installed): mysql -h 127.0.0.1 -P%s -u %s -p\n' "$MYSQL_PORT" "$MYSQL_USER"
-  if [[ "$linux_ip" == 10.0.2.* ]]; then
-    printf '\n[PODROID / VIRTUAL NETWORK]\n'
-    printf 'The Linux internal IP is NOT automatically the Android Wi-Fi IP.\n'
-    printf 'For Windows access, forward Android ports or create an SSH tunnel:\n'
-    printf '  ssh -N -p SSH_PORT -L 18080:127.0.0.1:80 -L 19090:127.0.0.1:9090 root@PHONE_IP\n'
-    printf 'Then access http://localhost:18080/ from Windows.\n'
-  elif [[ "$linux_ip" != unavailable ]]; then
-    printf '\n[POSSIBLE NETWORK URL - host network must be reachable]\nhttp://%s/\n' "$linux_ip"
+
+  if [[ "$linux_ip" == unavailable ]]; then
+    printf '\n[NETWORK]\nUnable to determine a Linux IPv4 address. Check: ip -4 addr\n'
+  else
+    printf '\n[NETWORK ACCESS - IF REACHABLE FROM YOUR COMPUTER]\n'
+    printf 'Frontend: http://%s/\n' "$linux_ip"
+    printf 'Backend : http://%s:9090/\n' "$linux_ip"
+    printf 'Access depends on the VM/WSL network mode, routing and firewall.\n'
+
+    if [[ "$linux_ip" == 10.0.2.* ]]; then
+      printf '\n[VIRTUAL GUEST NETWORK / PODROID NOTE]\n'
+      printf 'The Linux guest IP is NOT necessarily the Android Wi-Fi IP.\n'
+      printf 'A 10.0.2.x address alone does not prove the environment is Podroid.\n'
+      printf 'If using Podroid, run connect-podroid.bat on Windows or\n'
+      printf 'connect-podroid.sh on macOS/Linux, entering the Android Wi-Fi IP.\n'
+      printf 'Example SSH tunnel (replace SSH_PORT and PHONE_IP):\n'
+      printf '  ssh -N -p SSH_PORT -L 18080:127.0.0.1:80 -L 19090:127.0.0.1:9090 root@PHONE_IP\n'
+      printf 'After connecting, open on the computer running the tunnel:\n'
+      printf 'Frontend: http://localhost:18080/\n'
+      printf 'Backend : http://localhost:19090/\n'
+    fi
   fi
   printf '============================================================\n'
 }
+
 show_project_info() { show_container_status; show_connection_info; }
 start_project() { info 'Starting Employee Management System...'; compose up -d; success 'Project started'; show_project_info; }
 stop_project() {
@@ -108,11 +133,16 @@ show_logs() {
   printf '按 Ctrl+C 停止 Log 並返回主選單。\n\n'
   if [[ -n "$service" ]]; then compose logs -f "$service" || true; else compose logs -f || true; fi
 }
-rebuild_project() { info 'Building and starting Employee Management System...'; compose up -d --build; success 'Project rebuilt and started'; show_project_info; }
+rebuild_project() {
+  info 'Building and starting Employee Management System...'
+  compose up -d --build
+  success 'Project rebuilt and started'
+  show_project_info
+}
 
 repair_frontend() {
   info 'Repairing Frontend: recreate container and refresh bind mounts...'
-  # Recreate only the frontend; do not rebuild or restart the backend and MySQL.
+  # Recreate only frontend; do not rebuild/restart backend or MySQL.
   if ! compose up -d --force-recreate --no-deps frontend; then
     warning 'Frontend recreate failed. Check: docker compose logs --tail=100 frontend'
     return 1
@@ -130,7 +160,6 @@ repair_frontend() {
     warning 'Unable to read frontend directory inside container.'
     return 1
   fi
-
   if ! docker exec "$container_id" test -f /usr/share/nginx/html/index.html; then
     warning 'index.html is missing inside the container.'
     warning 'Check /usr/local/app/nginx/html and the frontend bind mount in docker-compose.yml.'
@@ -155,7 +184,7 @@ repair_frontend() {
   else
     warning 'curl is not installed. Skipping HTTP test; run curl -I http://127.0.0.1:80/ manually.'
   fi
-  printf '\n[INFO] If using an SSH tunnel on Windows, visit http://localhost:18080/\n'
+  show_connection_info
 }
 
 confirm_action() {

@@ -365,36 +365,97 @@ get_linux_ip() {
   printf '%s\n' "${detected_ip:-Unavailable}"
 }
 
+
+# =========================================================
+# Network / Connection Information
+# Ubuntu / Debian / Alpine / WSL / Multipass / Podroid
+# =========================================================
+
 LINUX_IP="$(get_linux_ip)"
 
-printf '\n[OK] Deployment command finished.\n'
-printf 'Source: %s\nDeployment: %s\nArchitecture: %s\n' \
-  "$SOURCE_DIR" "$APP_DIR" "$ARCH"
+printf '\n============================================================\n'
+printf ' Employee Management System - Deployment Complete\n'
+printf '============================================================\n'
+
+printf '\n[SYSTEM]\n'
+printf 'Distribution : %s\n' "$DISTRO"
+printf 'Architecture : %s\n' "$ARCH"
+printf 'Source       : %s\n' "$SOURCE_DIR"
+printf 'Deployment   : %s\n' "$APP_DIR"
 
 printf '\n[NETWORK]\n'
-printf 'Linux internal IP: %s\n' "$LINUX_IP"
-printf 'This address may not be reachable from other devices (e.g. Podroid NAT).\n'
+printf 'Linux IP     : %s\n' "$LINUX_IP"
 
-printf '\n[LOCAL ACCESS INSIDE LINUX]\n'
-printf 'Frontend: http://127.0.0.1:80/\n'
-printf 'Backend : http://127.0.0.1:9090/\n'
-printf 'MySQL host port: 3307\n'
+# Local access is always shown.
+printf '\n[LOCAL ACCESS]\n'
+printf 'Frontend     : http://127.0.0.1:80/\n'
+printf 'Backend      : http://127.0.0.1:9090/\n'
+printf 'MySQL Port   : 3307\n'
+
+# =========================================================
+# Detect Podroid-style guest network
+# =========================================================
+
+IS_PODROID_NETWORK=false
 
 case "$LINUX_IP" in
-  10.0.2.*)
-    printf '\n[NOTICE] A 10.0.2.x guest/virtual network address was detected.\n'
-    printf 'Do not assume it is your Android Wi-Fi IP.\n'
-    ;;
+    10.0.2.*)
+        IS_PODROID_NETWORK=true
+        ;;
 esac
 
-printf '\n[REMOTE ACCESS - IF SSH FORWARDING IS CONFIGURED]\n'
-printf 'On Windows: run connect-podroid.bat\n'
-printf 'On macOS/Linux: run connect-podroid.sh\n'
-printf 'Enter the Android Wi-Fi IP and use the actual SSH port when prompted/configured.\n'
-printf 'After the SSH tunnel connects, open these URLs ON THE COMPUTER RUNNING IT:\n'
-printf 'Frontend: http://localhost:18080/\n'
-printf 'Backend : http://localhost:19090/\n'
-printf 'An SSH tunnel is not created by this installer.\n'
+# =========================================================
+# Show connection instructions by network environment
+# =========================================================
 
-printf '\nLogs: cd %s && docker compose logs -f\n' "$APP_DIR"
-printf 'Note: Container startup does not guarantee application/database readiness.\n'
+if [[ "$IS_PODROID_NETWORK" == true ]]; then
+
+    printf '\n[PODROID / VIRTUAL NETWORK]\n'
+
+    printf 'Detected Linux guest IP: %s\n' "$LINUX_IP"
+    printf 'This IP may not be reachable from the Android Wi-Fi network.\n'
+    printf '10.0.2.x alone does not definitively identify Podroid.\n'
+
+    printf '\n[REMOTE ACCESS VIA SSH TUNNEL]\n'
+
+    printf 'Windows      : connect-podroid.bat\n'
+    printf 'macOS / Linux: connect-podroid.sh\n'
+
+    printf '\nEnter your Android Wi-Fi IP when prompted.\n'
+    printf 'The SSH port must match the Podroid configuration.\n'
+
+    printf '\nAfter connecting, open on your computer:\n'
+    printf 'Frontend     : http://localhost:18080/\n'
+    printf 'Backend      : http://localhost:19090/\n'
+
+    printf '\nNote: This installer does not create an SSH tunnel.\n'
+
+elif [[ "$LINUX_IP" != "Unavailable" ]]; then
+
+    printf '\n[NETWORK ACCESS]\n'
+
+    printf 'Frontend     : http://%s/\n' "$LINUX_IP"
+    printf 'Backend      : http://%s:9090/\n' "$LINUX_IP"
+
+    printf '\nOpen the frontend URL in your browser.\n'
+    printf 'Remote access depends on your VM network and firewall settings.\n'
+
+else
+
+    printf '\n[WARNING]\n'
+    printf 'Unable to detect the Linux IPv4 address automatically.\n'
+    printf 'Please run: ip -4 addr\n'
+
+fi
+
+printf '\n[DOCKER]\n'
+printf 'Container status:\n'
+printf '  cd %s && docker compose ps\n' "$APP_DIR"
+
+printf '\nView logs:\n'
+printf '  cd %s && docker compose logs -f\n' "$APP_DIR"
+
+printf '\n============================================================\n'
+printf ' Deployment command finished.\n'
+printf ' Container startup does not guarantee application readiness.\n'
+printf '============================================================\n'
